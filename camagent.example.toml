@@ -1,0 +1,44 @@
+# camagent configuration
+# Edit with: camagent configure
+
+# The camera on the local network
+[camera]
+host = ""
+onvif_port = 80
+username = ""
+password = ""
+rtsp_url = ""
+ptz = true
+ptz_profile = ""
+
+# Video uplink to the server (ffmpeg -> SRT)
+[stream]
+enabled = true
+audio = false
+srt_latency_ms = 400
+wallclock_timestamps = true
+stall_seconds = 15
+ffmpeg = ""
+
+# Server connection details (from yvcam: 'Show stream settings')
+[platform]
+camera_id = ""
+ingest_host = ""
+ingest_port = 8890
+srt_password = ""
+srt_passphrase = ""
+mqtt_host = ""
+mqtt_port = 1883
+mqtt_tls = false
+mqtt_password = ""
+
+# Agent behavior
+[agent]
+max_move_ms = 2000
+telemetry_interval_s = 30
+stale_command_s = 5
+
+# Where 'camagent update' installs from
+[update]
+repo = "https://github.com/OWNER/camagent.git"
+ref = "main"
