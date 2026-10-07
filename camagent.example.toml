@@ -40,5 +40,5 @@ stale_command_s = 5
 
 # Where 'camagent update' installs from
 [update]
-repo = "https://github.com/OWNER/camagent.git"
+repo = "https://github.com/msullivan1993/camagent.git"
 ref = "main"

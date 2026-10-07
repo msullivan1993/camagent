@@ -24,7 +24,7 @@ def is_admin() -> bool:
 
 def _require_admin():
     if not is_admin():
-        hint = "an administrator PowerShell" if os.name == "nt" else "sudo"
+        hint = "an administrator Command Prompt or PowerShell" if os.name == "nt" else "sudo"
         raise SystemExit(f"This needs administrator rights. Run it again from {hint}.")
 
 

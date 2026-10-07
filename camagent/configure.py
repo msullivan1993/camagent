@@ -175,7 +175,8 @@ def step_platform(cfg):
     p["mqtt_port"] = int(ask("MQTT port", p["mqtt_port"]))
 
 
-def test_mqtt(cfg) -> bool:
+def test_mqtt(cfg):
+    """Try logging in to the broker. Returns (ok, message)."""
     import paho.mqtt.client as mqtt
     p = cfg["platform"]
     done, result = threading.Event(), {}
@@ -184,7 +185,7 @@ def test_mqtt(cfg) -> bool:
         result["rc"] = rc
         done.set()
 
-    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{p['camera_id']}-setup-test")
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{p['camera_id']}-test")
     c.username_pw_set(p["camera_id"], p["mqtt_password"])
     if p.get("mqtt_tls"):
         c.tls_set()
@@ -192,27 +193,23 @@ def test_mqtt(cfg) -> bool:
     try:
         c.connect(p["mqtt_host"], int(p["mqtt_port"]), keepalive=10)
     except Exception as e:
-        print(f"  MQTT: can't reach {p['mqtt_host']}:{p['mqtt_port']} ({e})")
-        return False
+        return False, f"can't reach {p['mqtt_host']}:{p['mqtt_port']} ({e})"
     c.loop_start()
     done.wait(8)
     c.disconnect()
     c.loop_stop()
     rc = result.get("rc")
     if rc is None:
-        print("  MQTT: no answer from the broker.")
-        return False
+        return False, "no answer from the broker"
     if rc.is_failure:
-        print(f"  MQTT: broker refused the login ({rc}). Check the camera ID and MQTT password.")
-        return False
-    print("  MQTT: connected and logged in.")
-    return True
+        return False, f"broker refused the login ({rc}); check the camera ID and MQTT password"
+    return True, "connected and logged in"
 
 
 def run(config_path=None):
     path = Path(config_path or config.default_config_path())
     if path.exists() and not os.access(path, os.W_OK) or (not path.exists() and not service.is_admin()):
-        hint = "an administrator PowerShell" if os.name == "nt" else "sudo"
+        hint = "an administrator Command Prompt or PowerShell" if os.name == "nt" else "sudo"
         raise SystemExit(f"Can't write {path}. Run this from {hint}.")
 
     cfg = config.load_or_defaults(path)
@@ -220,7 +217,10 @@ def run(config_path=None):
 
     ffmpeg = camera.find_ffmpeg(cfg["stream"].get("ffmpeg", ""))
     if not ffmpeg:
-        print("\nWarning: ffmpeg wasn't found. Install it before starting the agent.")
+        print("\nffmpeg wasn't found. camagent needs it to send video. Install it with:")
+        print(f"    {camera.ffmpeg_install_hint()}")
+        if not yes("Continue setup anyway? (You can install ffmpeg afterward.)", default=False):
+            raise SystemExit("Setup stopped. Install ffmpeg, then run: camagent configure")
     ffprobe = camera.find_ffprobe(ffmpeg)
 
     step_find_camera(cfg)
@@ -231,7 +231,8 @@ def run(config_path=None):
         cfg["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too
 
     heading("Testing")
-    test_mqtt(cfg)
+    ok, msg = test_mqtt(cfg)
+    print(f"  MQTT: {msg}")
 
     saved = config.save(cfg, path)
     print(f"\nSaved to {saved}")

@@ -10,6 +10,11 @@ from .config import redact, rtsp_with_auth, scrub, srt_url
 
 log = logging.getLogger("uplink")
 
+# ffmpeg messages that are expected with many cameras and don't affect the stream
+HARMLESS = (
+    "Timestamps are unset in a packet",
+)
+
 
 class Uplink(threading.Thread):
     def __init__(self, cfg: dict):
@@ -70,9 +75,13 @@ class Uplink(threading.Thread):
     def _read_stderr(self, proc):
         for line in proc.stderr:
             line = scrub(line.rstrip())
-            if line:
-                self._stderr.append(line)
-                log.warning("ffmpeg: %s", line)
+            if not line:
+                continue
+            if any(h in line for h in HARMLESS):
+                log.debug("ffmpeg: %s", line)
+                continue
+            self._stderr.append(line)
+            log.warning("ffmpeg: %s", line)
 
     # ---------- main loop ----------
     def run(self):

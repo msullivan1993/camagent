@@ -144,6 +144,13 @@ def onvif_inspect(host, port, user, password) -> dict:
 
 # ---------- ffmpeg / ffprobe ----------
 
+def ffmpeg_install_hint() -> str:
+    import os
+    if os.name == "nt":
+        return "winget install -e --id Gyan.FFmpeg   (then open a new Command Prompt)"
+    return "sudo apt install ffmpeg"
+
+
 def find_ffmpeg(configured: str = "") -> str:
     if configured and Path(configured).exists():
         return configured

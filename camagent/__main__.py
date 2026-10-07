@@ -3,6 +3,7 @@
   camagent configure          interactive setup (find camera, pick stream, server details)
   camagent run                run the agent in the foreground (what the service runs)
   camagent discover           list ONVIF cameras on the network
+  camagent doctor             check everything the agent needs, with fixes
   camagent install-service    install and start the system service
   camagent uninstall-service  remove the system service
   camagent restart            restart the service
@@ -23,6 +24,7 @@ def main(argv=None):
     sub.add_parser("run", help="run the agent in the foreground")
     sub.add_parser("configure", help="interactive setup")
     sub.add_parser("discover", help="list ONVIF cameras on the network")
+    sub.add_parser("doctor", help="check everything the agent needs")
     sub.add_parser("install-service", help="install and start the service")
     sub.add_parser("uninstall-service", help="remove the service")
     sub.add_parser("restart", help="restart the service")
@@ -67,6 +69,11 @@ def main(argv=None):
             print("No ONVIF cameras answered.")
         for c in cams:
             print(f"{c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip())
+
+    elif args.cmd == "doctor":
+        logging.basicConfig(level=logging.ERROR)
+        from .doctor import run
+        sys.exit(run(cfg_path))
 
     elif args.cmd == "install-service":
         from .service import install
