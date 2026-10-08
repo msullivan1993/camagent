@@ -219,4 +219,8 @@ def parse_settings_block(text: str) -> dict:
         out["mqtt_host"] = values["MQTT_HOST"]
     if values.get("MQTT_PASS"):
         out["mqtt_password"] = values["MQTT_PASS"]
+    if values.get("MQTT_PORT", "").isdigit():
+        out["mqtt_port"] = int(values["MQTT_PORT"])
+    if values.get("MQTT_TLS"):
+        out["mqtt_tls"] = values["MQTT_TLS"].strip().lower() in ("1", "true", "yes", "on")
     return out
