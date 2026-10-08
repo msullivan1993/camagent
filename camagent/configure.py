@@ -71,7 +71,25 @@ def step_find_camera(cfg):
     cam["password"] = ask_secret("Camera password", cam["password"])
 
 
+RETRY_CAMERA = "Re-enter the camera's address and login, and try again"
+
+
+def _is_h264(encoding):
+    return str(encoding or "").upper().replace(".", "").replace("-", "") in ("H264", "AVC")
+
+
+def _codec_flag(encoding):
+    e = str(encoding or "").upper().replace(".", "").replace("-", "")
+    if not e or e in ("H264", "AVC"):
+        return ""            # blank = unknown; the stream check after picking will tell
+    if e in ("H265", "HEVC"):
+        return "  [H.265: won't play in most browsers]"
+    return "  [won't play in browsers]"
+NO_ONVIF = "Continue without ONVIF (find the stream another way; PTZ will be off)"
+
+
 def step_pick_stream(cfg, ffprobe):
+    """Returns False if the user wants to go back and re-enter the camera's details."""
     cam = cfg["camera"]
     heading("Stream")
     print("Asking the camera for its streams over ONVIF...")
@@ -79,18 +97,26 @@ def step_pick_stream(cfg, ffprobe):
         info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
     except Exception as e:
         info = None
-        print(f"  ONVIF didn't work: {camera.friendly_error(e)}")
-        print("  (Common causes: wrong port or password, ONVIF disabled, or the camera's clock is off.)")
+        msg = camera.friendly_error(e)
+        print(f"  ONVIF didn't work: {msg}")
+        if "login rejected" in msg:
+            print("  Many cameras need a separate ONVIF user, created in the camera's own web page")
+            print("  (often under Network > ONVIF or Security > ONVIF User). Its web login may not work here.")
+        else:
+            print("  (Common causes: wrong IP or ONVIF port, ONVIF turned off, or the camera's clock is off.)")
+        if choose([RETRY_CAMERA, NO_ONVIF], str) == RETRY_CAMERA:
+            return False
 
     if info and info["profiles"]:
         print(f"  Found: {info['manufacturer']} {info['model']} (firmware {info['firmware']})")
         profiles = [p for p in info["profiles"] if p["rtsp_url"]]
+        profiles.sort(key=lambda p: not _is_h264(p["encoding"]))      # browser-friendly streams first
         if profiles:
-            print("Which stream should be sent? (The highest quality is usually first.)")
+            print("Which stream should be sent? (Pick an H.264 one: browsers can't play the others.)")
             pick = choose(profiles, lambda p: (
-                f"{p['name']}: {p['encoding']} {p['width']}x{p['height']}"
+                f"{p['name']}: {p['encoding'] or '?'} {p['width']}x{p['height']}"
                 f"{' @ ' + str(p['fps']) + ' fps' if p['fps'] else ''}"
-                f"{'  [PTZ]' if p['ptz'] else ''}\n       {p['rtsp_url']}"),
+                f"{'  [PTZ]' if p['ptz'] else ''}{_codec_flag(p['encoding'])}\n       {p['rtsp_url']}"),
                 allow_none_text="None of these; I'll enter an RTSP URL")
             if pick:
                 cam["rtsp_url"] = pick["rtsp_url"]
@@ -103,7 +129,7 @@ def step_pick_stream(cfg, ffprobe):
                 print("  No PTZ found on this camera; PTZ control will be off.")
                 cam["ptz"], cam["ptz_profile"] = False, ""
             if pick:
-                return
+                return True
 
     if ffprobe and yes("Try common RTSP addresses for popular camera brands?", default=True):
         def progress(vendor, path):
@@ -116,35 +142,59 @@ def step_pick_stream(cfg, ffprobe):
                 cam["rtsp_url"] = pick["rtsp_url"]
                 if not info:
                     cam["ptz"] = False
-                return
+                return True
         else:
             print("  None of the common addresses answered.")
 
     cam["rtsp_url"] = config.strip_auth(ask("RTSP URL (credentials are added automatically)", cam["rtsp_url"]))
     if not info:
         cam["ptz"] = yes("Does this camera have PTZ (and ONVIF working)?", default=False)
+    return True
 
 
 def step_check_stream(cfg, ffprobe):
+    """Returns "ok", "camera" (go back to the camera's address/login) or "stream" (pick another stream)."""
     cam, s = cfg["camera"], cfg["stream"]
     if not ffprobe:
         print("\n(ffprobe not found, so the stream can't be checked. Install ffmpeg to enable this.)")
-        return
-    print("\nChecking the stream...")
-    streams = camera.probe(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
-    if not streams:
-        print("  Couldn't read the stream. Double-check the RTSP URL and camera login.")
-        return
-    print(f"  OK: {camera.describe(streams)}")
-    video = next((x for x in streams if x.get("codec_type") == "video"), None)
-    if video and video.get("codec_name") != "h264":
-        print(f"  Note: the video is {video.get('codec_name')}. Browsers play H.264 directly;")
-        print("  other codecs need transcoding on the server, so H.264 is recommended for now.")
+        return "ok"
+    while True:
+        print("\nChecking the stream...")
+        streams = camera.probe(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
+        if not streams:
+            print(f"  Couldn't read {cam['rtsp_url'] or '(no RTSP URL)'}.")
+            print("  Check the URL, and that the camera login is allowed to view RTSP.")
+            other_url = "Enter a different RTSP URL"
+            keep = "Keep it anyway (it won't stream until this is fixed)"
+            pick = choose([other_url, RETRY_CAMERA, keep], str)
+            if pick == other_url:
+                cam["rtsp_url"] = config.strip_auth(ask("RTSP URL", cam["rtsp_url"]))
+                continue
+            return "camera" if pick == RETRY_CAMERA else "ok"
+
+        print(f"  Read it: {camera.describe(streams)}")
+        video = next((x for x in streams if x.get("codec_type") == "video"), None)
+        codec = (video or {}).get("codec_name", "")
+        if video and codec != "h264":
+            name = {"hevc": "H.265 (HEVC)"}.get(codec, codec.upper())
+            print(f"\n  This stream is {name}. Most viewers' browsers can't play it, so they'd see a black player.")
+            print("  Set this stream to H.264 in the camera's web page (Video or Encode settings; also turn off")
+            print("  any 'smart codec' or H.264+ option), or pick another stream such as the camera's sub-stream.")
+            recheck, other = "I've changed the camera to H.264: check again", "Pick a different stream"
+            keep = "Keep it anyway (viewers won't see video until it's H.264)"
+            pick = choose([recheck, other, keep], str)
+            if pick == recheck:
+                continue
+            if pick == other:
+                return "stream"
+        break
+
     has_audio = any(x.get("codec_type") == "audio" for x in streams)
     if has_audio:
         s["audio"] = yes("The camera sends audio. Include it in the stream?", default=s["audio"])
     else:
         s["audio"] = False
+    return "ok"
 
 
 def step_platform(cfg):
@@ -224,9 +274,19 @@ def _tools(cfg):
 
 
 def _walk(cam, ffmpeg, ffprobe):
-    step_find_camera(cam)
-    step_pick_stream(cam, ffprobe)
-    step_check_stream(cam, ffprobe)
+    done = False
+    while not done:                               # camera details -> stream; go back on failure
+        step_find_camera(cam)
+        while True:
+            if not step_pick_stream(cam, ffprobe):
+                break                             # back to the camera's address and login
+            result = step_check_stream(cam, ffprobe)
+            if result == "camera":
+                break
+            if result == "stream":
+                continue                          # pick another stream from the same camera
+            done = True
+            break
     step_platform(cam)
     if ffmpeg:
         cam["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too
@@ -240,9 +300,20 @@ def _finish(cam, main_path, others):
     if clash and not yes(f"Camera '{cid}' is already set up on this machine. Replace its settings?", default=False):
         raise SystemExit("Nothing saved.")
 
-    heading("Testing")
-    ok, msg = test_mqtt(cam)
-    print(f"  MQTT: {msg}")
+    while True:
+        heading("Testing")
+        ok, msg = test_mqtt(cam)
+        print(f"  Server login: {msg}")
+        if ok:
+            break
+        again, anyway = "Paste the settings block again", "Save anyway (it won't connect until this is fixed)"
+        pick = choose([again, anyway, "Cancel without saving"], str)
+        if pick == again:
+            step_platform(cam)
+            continue
+        if pick == anyway:
+            break
+        raise SystemExit("Nothing saved.")
 
     if clash and Path(clash["_source"]) != Path(cam.get("_source") or ""):
         config.remove_camera(clash, main_path)

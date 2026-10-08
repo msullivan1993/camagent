@@ -1,4 +1,4 @@
-"""camagent command line.
+"""camagent command line. Run `camagent` on its own for a menu.
 
   camagent add                set up another camera on this machine
   camagent configure [CAM]    change a camera's settings (or set up the first one)
@@ -23,7 +23,7 @@ from . import __version__
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="camagent", description="YonderView camera site agent")
     ap.add_argument("--config", help="path to camagent.toml (default: the standard location)")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub = ap.add_subparsers(dest="cmd")
     sub.add_parser("run", help="run the agent in the foreground")
     sub.add_parser("add", help="set up another camera")
     p = sub.add_parser("configure", help="change a camera's settings")
@@ -46,6 +46,14 @@ def main(argv=None):
         p.add_argument("--config", dest="config_sub", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     cfg_path = getattr(args, "config_sub", None) or args.config
+
+    if args.cmd is None:
+        from .menu import run as menu
+        try:
+            menu(cfg_path)
+        except (KeyboardInterrupt, EOFError):
+            print()
+        return
 
     if args.cmd == "version":
         print(f"camagent {__version__}")

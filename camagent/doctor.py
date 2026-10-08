@@ -131,8 +131,8 @@ def _check_camera(r, cfg, ffprobe):
                 r.line(OK, "Camera stream", camera.describe(streams))
                 video = next((x for x in streams if x.get("codec_type") == "video"), None)
                 if video and video.get("codec_name") != "h264":
-                    r.line(WARN, "Video codec", f"{video.get('codec_name')} (browsers play H.264 directly)",
-                           "set the camera's main stream to H.264")
+                    r.line(FAIL, "Video codec", f"{video.get('codec_name')}: most viewers' browsers can't play it",
+                           "set this stream to H.264 in the camera's web page (and turn off 'smart codec'/H.264+)")
             else:
                 r.line(FAIL, "Camera stream", f"can't read {config.strip_auth(cam['rtsp_url'])}",
                        f"check the RTSP URL and camera login (camagent configure {cid})")

@@ -72,6 +72,16 @@ if ($machinePath -notlike "*$Bin*") {
 }
 Refresh-Path
 
+# Start menu shortcut: opens the camagent menu (it asks for administrator rights itself)
+try {
+    $lnk = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\camagent.lnk"
+    $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
+    $sc.TargetPath = $venvPy
+    $sc.Arguments = "-m camagent"
+    $sc.Description = "camagent: YonderView camera agent"
+    $sc.Save()
+} catch { Write-Host "    (couldn't create the Start menu shortcut: $_)" }
+
 # the config holds passwords: only Administrators and SYSTEM may read this folder
 icacls $Base /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
 

@@ -49,6 +49,13 @@ sudo CAMAGENT_REPO=https://TOKEN@github.com/msullivan1993/camagent.git bash inst
 $env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
 ```
 
+## The menu
+
+Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
+everything: show cameras and status, add / change / remove a camera, check everything, show the
+recent log, restart or install the service, update, and find cameras on the network. On Windows it
+asks for administrator rights itself. The commands below still work for scripts and remote use.
+
 ## Setup
 
 `camagent configure` walks through:
@@ -61,6 +68,14 @@ $env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
 5. **Testing** the server login, saving the config, and installing the service.
 
 Run it again at any time to change settings; Enter keeps the current value.
+
+If a step fails (ONVIF login rejected, stream unreadable, server login refused), setup stops and
+offers to go back and fix it instead of saving settings that won't work.
+
+**Video must be H.264.** Browsers can't reliably play H.265 (HEVC). Setup lists H.264 streams
+first, flags others, and stops if the stream it reads isn't H.264: change the stream to H.264 in
+the camera's web page (and turn off "smart codec" / H.264+), or pick another stream such as the
+sub-stream. ONVIF sometimes reports the codec wrongly, so the check reads the actual stream.
 
 ## Several cameras
 
