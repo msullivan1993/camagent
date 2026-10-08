@@ -95,7 +95,7 @@ The config contains passwords and is readable only by administrators and the ser
 
 | Topic | Direction | Content |
 |---|---|---|
-| `cam/<id>/cmd` | server → agent | `{"op":"move","pan":0.5,"tilt":0,"zoom":0,"ms":800,"req":"1"}`, `stop`, `preset` (with `id`), `presets`, `info` |
+| `cam/<id>/cmd` | server → agent | `{"op":"move","pan":0.5,"tilt":0,"zoom":0,"ms":800,"req":"1"}`, `stop`, `preset` (with `id`), `presets`, `preset_record` (`name`, optional `id` to overwrite), `preset_delete` (`id`), `info` |
 | `cam/<id>/ack` | agent → server | `{"req":"1","ok":true,"result":...}` |
 | `cam/<id>/status` | agent → server | `online` / `offline` (retained) |
 | `cam/<id>/config` | server → agent | `{"invert_pan":false,"invert_tilt":false}` (retained) |
