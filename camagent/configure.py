@@ -150,7 +150,7 @@ def step_check_stream(cfg, ffprobe):
 def step_platform(cfg):
     p, s = cfg["platform"], cfg["stream"]
     heading("Server")
-    print("Paste the settings block from yvcam ('Show stream settings'), then press Enter")
+    print("Paste the settings block from the camera's Connection page on yonderview.net, then press Enter")
     print("on an empty line. Or just press Enter now to type the values one by one.")
     lines = []
     while True:
@@ -206,41 +206,173 @@ def test_mqtt(cfg):
     return True, "connected and logged in"
 
 
-def run(config_path=None):
-    path = Path(config_path or config.default_config_path())
-    if path.exists() and not os.access(path, os.W_OK) or (not path.exists() and not service.is_admin()):
+def _check_writable(path: Path):
+    target = path if path.exists() else path.parent
+    if (target.exists() and not os.access(target, os.W_OK)) or (not target.exists() and not service.is_admin()):
         hint = "an administrator Command Prompt or PowerShell" if os.name == "nt" else "sudo"
         raise SystemExit(f"Can't write {path}. Run this from {hint}.")
 
-    cfg = config.load_or_defaults(path)
-    print("camagent setup. Press Enter to keep the value shown in [brackets].")
 
+def _tools(cfg):
     ffmpeg = camera.find_ffmpeg(cfg["stream"].get("ffmpeg", ""))
     if not ffmpeg:
         print("\nffmpeg wasn't found. camagent needs it to send video. Install it with:")
         print(f"    {camera.ffmpeg_install_hint()}")
         if not yes("Continue setup anyway? (You can install ffmpeg afterward.)", default=False):
-            raise SystemExit("Setup stopped. Install ffmpeg, then run: camagent configure")
-    ffprobe = camera.find_ffprobe(ffmpeg)
+            raise SystemExit("Setup stopped. Install ffmpeg, then run camagent again.")
+    return ffmpeg, camera.find_ffprobe(ffmpeg)
 
-    step_find_camera(cfg)
-    step_pick_stream(cfg, ffprobe)
-    step_check_stream(cfg, ffprobe)
-    step_platform(cfg)
+
+def _walk(cam, ffmpeg, ffprobe):
+    step_find_camera(cam)
+    step_pick_stream(cam, ffprobe)
+    step_check_stream(cam, ffprobe)
+    step_platform(cam)
     if ffmpeg:
-        cfg["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too
+        cam["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too
+    if not cam["platform"].get("camera_id"):
+        raise SystemExit("No camera ID was given, so nothing was saved. Paste the settings block and try again.")
+
+
+def _finish(cam, main_path, others):
+    cid = cam["platform"]["camera_id"]
+    clash = next((o for o in others if o["platform"]["camera_id"] == cid), None)
+    if clash and not yes(f"Camera '{cid}' is already set up on this machine. Replace its settings?", default=False):
+        raise SystemExit("Nothing saved.")
 
     heading("Testing")
-    ok, msg = test_mqtt(cfg)
+    ok, msg = test_mqtt(cam)
     print(f"  MQTT: {msg}")
 
-    saved = config.save(cfg, path)
-    print(f"\nSaved to {saved}")
+    if clash and Path(clash["_source"]) != Path(cam.get("_source") or ""):
+        config.remove_camera(clash, main_path)
+    saved = config.save_camera(cam, main_path)
+    print(f"\nSaved camera '{cid}' to {saved}")
+    _apply(main_path)
 
+
+def _apply(main_path):
     if service.is_installed():
-        if yes("Restart the service to use the new settings?", default=True):
+        if yes("Restart the service to apply the change?", default=True):
             service.restart()
     elif yes("Install and start camagent as a service now?", default=True):
-        service.install(saved)
+        service.install(main_path)
     else:
         print("Start it later with: camagent install-service   (or test it with: camagent run)")
+
+
+def _pick(cams, camera_id):
+    if camera_id:
+        cam = next((c for c in cams if c["platform"]["camera_id"] == camera_id), None)
+        if not cam:
+            raise SystemExit(f"No camera '{camera_id}' here. See them with: camagent list")
+        return cam
+    if len(cams) == 1:
+        return cams[0]
+    print("Which camera?")
+    return choose(cams, lambda c: c["platform"]["camera_id"], allow_none_text="Add a new camera")
+
+
+def run(config_path=None, camera_id=None):
+    """camagent configure [camera]: change a camera's settings (or set up the first one)."""
+    main_path = Path(config_path or config.default_config_path())
+    _check_writable(main_path)
+    main, cams, problems = config.load_all(main_path)
+    for p in problems:
+        print(f"Note: {p}")
+    if not cams:
+        return add(config_path)
+    cam = _pick(cams, camera_id)
+    if cam is None:
+        return add(config_path)
+    print(f"camagent setup for camera '{cam['platform']['camera_id']}'. "
+          "Press Enter to keep the value shown in [brackets].")
+    original_id = cam["platform"]["camera_id"]
+    ffmpeg, ffprobe = _tools(cam)
+    _walk(cam, ffmpeg, ffprobe)
+    others = [c for c in cams if c["platform"]["camera_id"] != original_id]
+    _finish(cam, main_path, others)
+
+
+def add(config_path=None):
+    """camagent add: set up another camera on this machine."""
+    import copy
+    main_path = Path(config_path or config.default_config_path())
+    _check_writable(main_path)
+    main, cams, _ = config.load_all(main_path)
+    cam = {s: copy.deepcopy(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS}
+    for s in config.MAIN_SECTIONS:
+        cam[s] = copy.deepcopy(main[s])
+    # Reuse the server address and ffmpeg path from a camera that's already set up
+    if cams:
+        for k in ("ingest_host", "ingest_port", "mqtt_host", "mqtt_port", "mqtt_tls"):
+            cam["platform"][k] = cams[0]["platform"][k]
+        cam["stream"]["ffmpeg"] = cams[0]["stream"].get("ffmpeg", "")
+    n = len(cams) + 1
+    print(f"Adding camera #{n} on this machine. Press Enter to keep the value shown in [brackets].")
+    ffmpeg, ffprobe = _tools(cam)
+    _walk(cam, ffmpeg, ffprobe)
+    _finish(cam, main_path, cams)
+
+
+def remove(config_path=None, camera_id=None):
+    """camagent remove <camera>: stop streaming a camera from this machine and delete its settings."""
+    main_path = Path(config_path or config.default_config_path())
+    _check_writable(main_path)
+    _, cams, _ = config.load_all(main_path)
+    if not cams:
+        raise SystemExit("No cameras are set up here.")
+    cam = _pick(cams, camera_id)
+    if cam is None:
+        return
+    cid = cam["platform"]["camera_id"]
+    if not yes(f"Remove camera '{cid}' from this machine? Its settings will be deleted.", default=False):
+        raise SystemExit("Nothing removed.")
+    config.remove_camera(cam, main_path)
+    print(f"Removed '{cid}'. (It still exists on yonderview.net; this only stops sending it from here.)")
+    if service.is_installed() and len(cams) > 1:
+        if yes("Restart the service so it stops?", default=True):
+            service.restart()
+    elif service.is_installed():
+        print("That was the last camera. Stop the service with: camagent uninstall-service")
+
+
+def list_cameras(config_path=None):
+    """camagent list: every camera on this machine, with live status when the service is running."""
+    import json
+    import time
+    main_path = Path(config_path or config.default_config_path())
+    try:
+        _, cams, problems = config.load_all(main_path)
+    except PermissionError:
+        hint = "an administrator Command Prompt or PowerShell" if os.name == "nt" else "sudo"
+        raise SystemExit(f"Can't read the config. Run this from {hint}.")
+    live = {}
+    try:
+        data = json.loads(config.status_path().read_text(encoding="utf-8"))
+        if time.time() - data.get("updated", 0) < 60:
+            live = data.get("cameras", {})
+    except (OSError, ValueError):
+        pass
+    if not cams:
+        print("No cameras are set up here. Add one with: camagent add")
+    for c in cams:
+        cid = c["platform"]["camera_id"]
+        where = config.strip_auth(c["camera"].get("rtsp_url", "")) or c["camera"].get("host", "")
+        print(f"{cid}")
+        print(f"    camera: {where or '(not set)'}{'  [PTZ]' if c['camera'].get('ptz') else ''}"
+              f"{'  [stream off]' if not c['stream'].get('enabled', True) else ''}")
+        st = live.get(cid)
+        if st is None:
+            print("    status: " + ("service not running" if not live else "not running (check its settings)"))
+        else:
+            video = (f"streaming {st['fps']:.0f} fps, {st['bitrate_kbps']:.0f} kbps" if st.get("streaming")
+                     else "NOT streaming" + (f" ({st['last_error'][:80]})" if st.get("last_error") else ""))
+            parts = [video, "server connected" if st.get("mqtt") else "server NOT connected"]
+            if st.get("ptz"):
+                parts.append(f"PTZ {st['ptz']}")
+            print("    status: " + "; ".join(parts))
+        if c.get("_legacy"):
+            print("    (stored in the old single-camera format; `camagent configure` will move it)")
+    for p in problems:
+        print(f"PROBLEM: {p}")

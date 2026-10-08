@@ -1,5 +1,7 @@
-"""The agent: connects to the broker, runs the uplink, handles PTZ commands, publishes status and telemetry."""
+"""The agent. Each camera gets a CameraAgent (its own uplink, broker login, and PTZ); the Supervisor runs
+them side by side, so one camera's problems never stop the others."""
 import json
+import os
 import logging
 import signal
 import ssl
@@ -12,7 +14,7 @@ from . import __version__
 from .ptz import PTZ
 from .uplink import Uplink
 
-log = logging.getLogger("agent")
+log = logging.getLogger("camagent")
 
 REQUIRED = [
     ("platform", "camera_id"), ("platform", "mqtt_host"), ("platform", "mqtt_password"),
@@ -22,24 +24,27 @@ REQUIRED_STREAM = [
 ]
 
 
-def check_config(cfg):
+def missing_settings(cfg):
     missing = [f"[{s}] {k}" for s, k in REQUIRED if not cfg[s].get(k)]
     if cfg["stream"].get("enabled", True):
         missing += [f"[{s}] {k}" for s, k in REQUIRED_STREAM if not cfg[s].get(k)]
     if cfg["camera"].get("ptz", True) and not cfg["camera"].get("host"):
         missing.append("[camera] host")
-    if missing:
-        raise SystemExit("Config is missing: " + ", ".join(missing) + "\nRun: camagent configure")
+    return missing
 
 
-class Agent:
+class CameraAgent:
     def __init__(self, cfg: dict):
-        check_config(cfg)
+        missing = missing_settings(cfg)
+        if missing:
+            raise ValueError("missing " + ", ".join(missing))
         self.cfg = cfg
         self.cam_id = cfg["platform"]["camera_id"]
+        self.log = logging.getLogger(f"{self.cam_id}.agent")
         self.topics = {t: f"cam/{self.cam_id}/{t}" for t in ("cmd", "ack", "status", "config", "telemetry")}
         self.started = time.time()
         self.stopping = threading.Event()
+        self.mqtt_connected = False
 
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
@@ -57,7 +62,8 @@ class Agent:
 
     # ---------- MQTT ----------
     def _on_connect(self, c, userdata, flags, reason_code, properties=None):
-        log.info("MQTT connected: %s", reason_code)
+        self.log.info("MQTT connected: %s", reason_code)
+        self.mqtt_connected = not reason_code.is_failure
         if reason_code.is_failure:
             return
         c.subscribe(self.topics["cmd"], qos=1)
@@ -66,8 +72,9 @@ class Agent:
         self._publish_telemetry()
 
     def _on_disconnect(self, c, userdata, flags, reason_code, properties=None):
+        self.mqtt_connected = False
         if not self.stopping.is_set():
-            log.warning("MQTT disconnected: %s", reason_code)
+            self.log.warning("MQTT disconnected: %s", reason_code)
 
     def _on_message(self, c, userdata, msg):
         if msg.topic == self.topics["config"]:
@@ -82,21 +89,21 @@ class Agent:
                 raise RuntimeError("command too old; ignored")
             result = self._handle(cmd)
             if cmd.get("op") != "move":
-                log.info("command: %s", cmd.get("op"))
+                self.log.info("command: %s", cmd.get("op"))
             c.publish(self.topics["ack"], json.dumps({"req": req, "ok": True, "result": result}), qos=1)
         except Exception as e:
-            log.warning("command failed: %s", e)
+            self.log.warning("command failed: %s", e)
             c.publish(self.topics["ack"], json.dumps({"req": req, "ok": False, "error": str(e)}), qos=1)
 
     def _apply_config(self, payload):
         try:
             new = json.loads(payload or b"{}")
         except ValueError:
-            log.warning("ignored bad config message")
+            self.log.warning("ignored bad config message")
             return
         if self.ptz:
             self.ptz.settings.update({k: bool(new.get(k, False)) for k in ("invert_pan", "invert_tilt")})
-            log.info("camera settings: %s", self.ptz.settings)
+            self.log.info("camera settings: %s", self.ptz.settings)
 
     def _handle(self, cmd):
         op = cmd.get("op")
@@ -133,37 +140,34 @@ class Agent:
         try:
             self.mq.publish(self.topics["telemetry"], json.dumps(self._info()), qos=0)
         except Exception as e:
-            log.debug("telemetry publish failed: %s", e)
+            self.log.debug("telemetry publish failed: %s", e)
+
+    def status(self):
+        """For `camagent list`: a short snapshot of this camera."""
+        up = self.uplink.stats if self.uplink else None
+        return {
+            "mqtt": self.mqtt_connected,
+            "streaming": bool(up and up["running"] and up["fps"] > 0),
+            "fps": up["fps"] if up else None,
+            "bitrate_kbps": up["bitrate_kbps"] if up else None,
+            "restarts": up["restarts"] if up else None,
+            "last_error": (up or {}).get("last_error", ""),
+            "ptz": None if not self.ptz else ("connected" if self.ptz.connected else
+                                              "unavailable" if not self.ptz.available else "connecting"),
+        }
 
     # ---------- lifecycle ----------
-    def run(self):
-        log.info("camagent %s starting for camera '%s'", __version__, self.cam_id)
-        for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
-            if sig is not None:
-                try:
-                    signal.signal(sig, lambda *_: self.stopping.set())
-                except (ValueError, OSError):
-                    pass
-
+    def start(self):
+        self.log.info("starting")
         if self.uplink:
             self.uplink.start()
         if self.ptz:
             self.ptz.start()
-
         p = self.cfg["platform"]
         self.mq.connect_async(p["mqtt_host"], int(p["mqtt_port"]), keepalive=30)
         self.mq.loop_start()
 
-        interval = int(self.cfg["agent"].get("telemetry_interval_s", 30))
-        try:
-            while not self.stopping.wait(interval):
-                self._publish_telemetry()
-        except KeyboardInterrupt:
-            pass
-        self.shutdown()
-
     def shutdown(self):
-        log.info("shutting down")
         self.stopping.set()
         if self.ptz:
             self.ptz.shutdown()
@@ -175,3 +179,70 @@ class Agent:
             pass
         self.mq.disconnect()
         self.mq.loop_stop()
+
+
+class Supervisor:
+    """Runs every configured camera. A camera with a broken config is reported and skipped."""
+
+    def __init__(self, main_path=None):
+        from . import config
+        self.main_path = main_path
+        self.main, cams, problems = config.load_all(main_path)
+        for p in problems:
+            log.error("skipping %s", p)
+        self.agents = []
+        for cfg in cams:
+            cid = cfg["platform"].get("camera_id", "?")
+            try:
+                self.agents.append(CameraAgent(cfg))
+            except ValueError as e:
+                log.error("camera '%s' not started: %s (fix with: camagent configure %s)", cid, e, cid)
+        if not self.agents:
+            raise SystemExit("No cameras are configured. Add one with: camagent add")
+        self.stopping = threading.Event()
+        self.started = time.time()
+
+    def _write_status(self):
+        from . import config
+        path = config.status_path()
+        data = {"pid": os.getpid(), "version": __version__, "updated": time.time(),
+                "started": self.started, "cameras": {a.cam_id: a.status() for a in self.agents}}
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as e:
+            log.debug("couldn't write %s: %s", path, e)
+
+    def run(self):
+        ids = ", ".join(a.cam_id for a in self.agents)
+        log.info("camagent %s starting %d camera(s): %s", __version__, len(self.agents), ids)
+        for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None)):
+            if sig is not None:
+                try:
+                    signal.signal(sig, lambda *_: self.stopping.set())
+                except (ValueError, OSError):
+                    pass
+        for a in self.agents:
+            a.start()
+
+        interval = int(self.main["agent"].get("telemetry_interval_s", 30))
+        status_every = min(interval, 10)
+        last_telemetry = time.time()
+        self._write_status()
+        try:
+            while not self.stopping.wait(status_every):
+                self._write_status()
+                if time.time() - last_telemetry >= interval:
+                    for a in self.agents:
+                        a._publish_telemetry()
+                    last_telemetry = time.time()
+        except KeyboardInterrupt:
+            pass
+        log.info("shutting down")
+        threads = [threading.Thread(target=a.shutdown, daemon=True) for a in self.agents]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)

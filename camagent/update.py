@@ -23,4 +23,5 @@ def run(config_path=None, ref=None):
     new = subprocess.run([sys.executable, "-m", "camagent", "version"],
                          capture_output=True, text=True).stdout.strip()
     print(f"Installed: {new}")
+    service.refresh_unit(config_path)
     service.restart()

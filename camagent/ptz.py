@@ -4,7 +4,6 @@ import threading
 
 from .camera import friendly_error, onvif_connect
 
-log = logging.getLogger("ptz")
 
 
 def _clamp(v):
@@ -12,8 +11,9 @@ def _clamp(v):
 
 
 class PTZ:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, log=None):
         self.cfg = cfg
+        self.log = log or logging.getLogger(f"{cfg['platform'].get('camera_id', '')}.ptz")
         self.max_move_ms = int(cfg["agent"].get("max_move_ms", 2000))
         self.settings = {"invert_pan": False, "invert_tilt": False}
         self.connected = False
@@ -29,7 +29,7 @@ class PTZ:
 
     # ---------- connection ----------
     def start(self):
-        threading.Thread(target=self._connect_loop, name="ptz-connect", daemon=True).start()
+        threading.Thread(target=self._connect_loop, name=f"ptz-{self.cfg['platform'].get('camera_id', '')}", daemon=True).start()
 
     def _connect_loop(self):
         if not self._connecting.acquire(blocking=False):
@@ -39,7 +39,7 @@ class PTZ:
                 try:
                     self._connect()
                 except Exception as e:
-                    log.warning("camera not reachable over ONVIF: %s; retrying in 15s", friendly_error(e))
+                    self.log.warning("camera not reachable over ONVIF: %s; retrying in 15s", friendly_error(e))
                     self._stop.wait(15)
         finally:
             self._connecting.release()
@@ -61,11 +61,11 @@ class PTZ:
                 break
         if not chosen:
             self.available = False
-            log.warning("no ONVIF profile with PTZ found; PTZ disabled for this camera")
+            self.log.warning("no ONVIF profile with PTZ found; PTZ disabled for this camera")
             return
         with self._lock:
             self.ptz, self.token, self.connected = ptz, chosen.token, True
-        log.info("PTZ ready on profile %s (%s)", getattr(chosen, "Name", ""), chosen.token)
+        self.log.info("PTZ ready on profile %s (%s)", getattr(chosen, "Name", ""), chosen.token)
 
     def _lost(self, err):
         try:
@@ -74,7 +74,7 @@ class PTZ:
                 return
         except ImportError:
             pass
-        log.warning("PTZ call failed (%s); reconnecting", err)
+        self.log.warning("PTZ call failed (%s); reconnecting", err)
         with self._lock:
             self.connected = False
         self.start()

@@ -1,9 +1,12 @@
 """camagent command line.
 
-  camagent configure          interactive setup (find camera, pick stream, server details)
+  camagent add                set up another camera on this machine
+  camagent configure [CAM]    change a camera's settings (or set up the first one)
+  camagent list               every camera here, with live status
+  camagent remove [CAM]       stop sending a camera from this machine
   camagent run                run the agent in the foreground (what the service runs)
   camagent discover           list ONVIF cameras on the network
-  camagent doctor             check everything the agent needs, with fixes
+  camagent doctor [CAM]       check everything the agent needs, with fixes
   camagent install-service    install and start the system service
   camagent uninstall-service  remove the system service
   camagent restart            restart the service
@@ -22,9 +25,15 @@ def main(argv=None):
     ap.add_argument("--config", help="path to camagent.toml (default: the standard location)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("run", help="run the agent in the foreground")
-    sub.add_parser("configure", help="interactive setup")
+    sub.add_parser("add", help="set up another camera")
+    p = sub.add_parser("configure", help="change a camera's settings")
+    p.add_argument("camera", nargs="?")
+    sub.add_parser("list", help="list cameras and their status")
+    p = sub.add_parser("remove", help="remove a camera from this machine")
+    p.add_argument("camera", nargs="?")
     sub.add_parser("discover", help="list ONVIF cameras on the network")
-    sub.add_parser("doctor", help="check everything the agent needs")
+    p = sub.add_parser("doctor", help="check everything the agent needs")
+    p.add_argument("camera", nargs="?")
     sub.add_parser("install-service", help="install and start the service")
     sub.add_parser("uninstall-service", help="remove the service")
     sub.add_parser("restart", help="restart the service")
@@ -46,21 +55,24 @@ def main(argv=None):
         logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                             format="%(asctime)s %(levelname)s %(name)s: %(message)s")
         logging.getLogger("zeep").setLevel(logging.WARNING)
-        from . import config
-        from .agent import Agent
-        try:
-            cfg = config.load(cfg_path)
-        except FileNotFoundError:
-            raise SystemExit(f"No config found at {cfg_path or config.default_config_path()}. "
-                             "Run: camagent configure")
-        Agent(cfg).run()
+        from .agent import Supervisor
+        Supervisor(cfg_path).run()
 
-    elif args.cmd == "configure":
-        from .configure import run
+    elif args.cmd in ("configure", "add", "remove"):
+        from . import configure
         try:
-            run(cfg_path)
+            if args.cmd == "configure":
+                configure.run(cfg_path, args.camera)
+            elif args.cmd == "add":
+                configure.add(cfg_path)
+            else:
+                configure.remove(cfg_path, args.camera)
         except (KeyboardInterrupt, EOFError):
             print("\nCancelled; nothing saved.")
+
+    elif args.cmd == "list":
+        from .configure import list_cameras
+        list_cameras(cfg_path)
 
     elif args.cmd == "discover":
         from .camera import discover
@@ -73,7 +85,7 @@ def main(argv=None):
     elif args.cmd == "doctor":
         logging.basicConfig(level=logging.ERROR)
         from .doctor import run
-        sys.exit(run(cfg_path))
+        sys.exit(run(cfg_path, args.camera))
 
     elif args.cmd == "install-service":
         from .service import install

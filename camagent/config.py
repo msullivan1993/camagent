@@ -52,10 +52,13 @@ DEFAULTS = {
     },
 }
 
+CAMERA_SECTIONS = ("camera", "stream", "platform")      # one file per camera, in cameras/
+MAIN_SECTIONS = ("agent", "update")                     # shared settings, in camagent.toml
+
 SECTION_COMMENTS = {
     "camera": "The camera on the local network",
     "stream": "Video uplink to the server (ffmpeg -> SRT)",
-    "platform": "Server connection details (from yvcam: 'Show stream settings')",
+    "platform": "Server connection details (the settings block from the camera's Connection page)",
     "agent": "Agent behavior",
     "update": "Where 'camagent update' installs from",
 }
@@ -102,9 +105,9 @@ def _toml_value(v):
     return json.dumps(str(v))          # JSON string escaping is valid TOML basic-string syntax
 
 
-def dumps(cfg: dict) -> str:
-    lines = ["# camagent configuration", "# Edit with: camagent configure", ""]
-    for section in DEFAULTS:
+def dumps(cfg: dict, sections=None, title="camagent configuration") -> str:
+    lines = [f"# {title}", "# Edit with: camagent configure", ""]
+    for section in (sections or DEFAULTS):
         if SECTION_COMMENTS.get(section):
             lines.append(f"# {SECTION_COMMENTS[section]}")
         lines.append(f"[{section}]")
@@ -114,12 +117,24 @@ def dumps(cfg: dict) -> str:
     return "\n".join(lines)
 
 
-def save(cfg: dict, path=None) -> Path:
+def _secure_dir(d: Path):
+    """Config folders hold passwords: on Linux, readable only by root and the camagent service account."""
+    d.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            import grp
+            os.chown(d, 0, grp.getgrnam("camagent").gr_gid)
+            os.chmod(d, 0o750)
+        except (KeyError, PermissionError):
+            pass
+
+
+def save(cfg: dict, path=None, sections=None, title="camagent configuration") -> Path:
     path = Path(path or default_config_path())
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _secure_dir(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".camagent.")
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-        f.write(dumps(cfg))
+        f.write(dumps(cfg, sections, title))
     if os.name != "nt":
         # readable only by root and the service account, since it holds passwords
         try:
@@ -130,6 +145,99 @@ def save(cfg: dict, path=None) -> Path:
             os.chmod(tmp, 0o600)
     os.replace(tmp, path)
     return path
+
+
+# ---------- several cameras ----------
+# camagent.toml holds the shared [agent] and [update] settings; each camera has its own file in
+# cameras/<camera id>.toml with [camera], [stream] and [platform]. A camagent.toml from 0.1.x that
+# still has a camera in it keeps working: it counts as one camera until it's edited or migrated.
+
+def cameras_dir(main_path=None) -> Path:
+    return Path(main_path or default_config_path()).parent / "cameras"
+
+
+def camera_path(camera_id: str, main_path=None) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", camera_id or ""):
+        raise ValueError(f"not a valid camera ID: {camera_id!r}")
+    return cameras_dir(main_path) / f"{camera_id}.toml"
+
+
+def _combine(main: dict, camera: dict) -> dict:
+    out = copy.deepcopy(camera)
+    for s in MAIN_SECTIONS:
+        out[s] = copy.deepcopy(main[s])
+    return out
+
+
+def load_all(main_path=None):
+    """Returns (main, cameras, problems). Each camera is a full config dict with "_source" (its file)
+    and "_legacy" (True if it still lives in camagent.toml). A broken camera file is reported in
+    problems and skipped, so the other cameras still run."""
+    main_path = Path(main_path or default_config_path())
+    main = load_or_defaults(main_path)
+    cams, problems, seen = [], [], set()
+    d = cameras_dir(main_path)
+    for f in sorted(d.glob("*.toml")) if d.is_dir() else []:
+        try:
+            with f.open("rb") as fh:
+                cam = _combine(main, _merge(DEFAULTS, tomllib.load(fh)))
+        except Exception as e:  # noqa: BLE001
+            problems.append(f"{f.name}: {e}")
+            continue
+        cid = cam["platform"].get("camera_id") or f.stem
+        cam["platform"]["camera_id"] = cid
+        if cid in seen:
+            problems.append(f"{f.name}: camera '{cid}' is configured twice; ignored")
+            continue
+        seen.add(cid)
+        cam["_source"], cam["_legacy"] = f, False
+        cams.append(cam)
+    legacy_id = main["platform"].get("camera_id")
+    if legacy_id and legacy_id not in seen:
+        cam = copy.deepcopy(main)
+        cam["_source"], cam["_legacy"] = main_path, True
+        cams.insert(0, cam)
+    return main, cams, problems
+
+
+def save_camera(cam: dict, main_path=None) -> Path:
+    """Write one camera to cameras/<id>.toml. If it came from an old single-camera camagent.toml,
+    that file is rewritten with only the shared settings (migration)."""
+    main_path = Path(main_path or default_config_path())
+    cid = cam["platform"]["camera_id"]
+    path = camera_path(cid, main_path)
+    _secure_dir(path.parent)
+    save(cam, path, CAMERA_SECTIONS, f"camagent camera: {cid}")
+    old = cam.get("_source")
+    if cam.get("_legacy") or not main_path.exists():
+        save_main(load_or_defaults(main_path) if main_path.exists() else cam, main_path)
+    elif old and Path(old) != path and Path(old).parent == path.parent:
+        Path(old).unlink(missing_ok=True)             # the camera ID changed: drop the old file
+    cam["_source"], cam["_legacy"] = path, False
+    return path
+
+
+def save_main(main: dict, main_path=None) -> Path:
+    return save(main, main_path, MAIN_SECTIONS, "camagent shared settings (cameras are in the cameras folder)")
+
+
+def remove_camera(cam: dict, main_path=None):
+    main_path = Path(main_path or default_config_path())
+    if cam.get("_legacy"):
+        main = load(main_path)
+        for s in CAMERA_SECTIONS:
+            main[s] = copy.deepcopy(DEFAULTS[s])
+        save_main(main, main_path)
+    else:
+        Path(cam["_source"]).unlink(missing_ok=True)
+
+
+# ---------- runtime status (written by the service, read by `camagent list`) ----------
+
+def status_path() -> Path:
+    if os.name == "nt":
+        return base_dir() / "status.json"
+    return Path("/var/lib/camagent/status.json")
 
 
 # ---------- URL helpers ----------

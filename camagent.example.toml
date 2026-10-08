@@ -1,5 +1,5 @@
-# camagent configuration
-# Edit with: camagent configure
+# Example camera file: cameras/<camera id>.toml (shared [agent]/[update] go in camagent.toml)
+# Create with: camagent add    Edit with: camagent configure <camera>
 
 # The camera on the local network
 [camera]
@@ -20,7 +20,7 @@ wallclock_timestamps = true
 stall_seconds = 15
 ffmpeg = ""
 
-# Server connection details (from yvcam: 'Show stream settings')
+# Server connection details (the settings block from the camera's Connection page)
 [platform]
 camera_id = ""
 ingest_host = ""

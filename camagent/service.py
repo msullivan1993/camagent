@@ -49,7 +49,8 @@ Wants=network-online.target
 StartLimitIntervalSec=0
 
 [Service]
-{user}Environment=PYTHONUNBUFFERED=1
+{user}StateDirectory=camagent
+Environment=PYTHONUNBUFFERED=1
 ExecStart={sys.executable} -m camagent run --config {config_path}
 Restart=always
 RestartSec=5
@@ -134,6 +135,14 @@ def is_installed() -> bool:
         r = subprocess.run(["sc", "query", SERVICE], capture_output=True, text=True)
         return r.returncode == 0
     return UNIT_PATH.exists()
+
+
+def refresh_unit(config_path=None):
+    """Linux: rewrite the systemd unit so service settings added in newer versions apply."""
+    if os.name == "nt" or not UNIT_PATH.exists():
+        return
+    UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
+    _run(["systemctl", "daemon-reload"], check=False)
 
 
 def restart():

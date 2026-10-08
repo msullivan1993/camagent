@@ -57,19 +57,42 @@ $env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
 2. **Picking the stream**: asks the camera for its streams over ONVIF and lists them with
    resolution and codec. If ONVIF isn't available, it tries common RTSP addresses for popular brands.
 3. **Checking the stream** with ffprobe, and offering to include audio if the camera sends it.
-4. **Server details**: paste the block from yvcam's "Show stream settings", or type values in.
-5. **Testing** the MQTT login, saving the config, and installing the service.
+4. **Server details**: paste the settings block from the camera's **Connection** page on yonderview.net.
+5. **Testing** the server login, saving the config, and installing the service.
 
 Run it again at any time to change settings; Enter keeps the current value.
+
+## Several cameras
+
+One camagent can send any number of cameras. Each camera has its own stream, server login and
+PTZ connection, and runs independently: if one camera goes offline or has a bad setting, the
+others keep streaming.
+
+```
+camagent add                 # set up another camera (paste that camera's settings block)
+camagent list                # every camera here, with live status
+camagent configure <camera>  # change one camera
+camagent remove <camera>     # stop sending a camera from this machine
+camagent doctor <camera>     # check one camera (or all of them, with no name)
+```
+
+Upload bandwidth is the real limit: each camera needs roughly its own bitrate. Video is copied,
+not re-encoded, so CPU use stays low even on a Raspberry Pi.
+
+Upgrading from 0.1.x: the existing camera keeps working as is. The first time it's changed with
+`camagent configure`, it moves to the new layout (`cameras/<camera>.toml`) automatically.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `camagent configure` | Interactive setup |
+| `camagent add` | Set up another camera |
+| `camagent configure [camera]` | Change a camera's settings (or set up the first one) |
+| `camagent list` | List cameras with live status (stream, server connection, PTZ) |
+| `camagent remove [camera]` | Stop sending a camera from this machine |
 | `camagent run` | Run in the foreground (useful for testing) |
 | `camagent discover` | List ONVIF cameras on the network |
-| `camagent doctor` | Check Python, ffmpeg, the camera, the server, and the service, with fixes for anything wrong |
+| `camagent doctor [camera]` | Check Python, ffmpeg, each camera, the server, and the service, with fixes for anything wrong |
 | `camagent install-service` | Install and start the service |
 | `camagent uninstall-service` | Remove the service |
 | `camagent restart` | Restart the service |
@@ -85,11 +108,14 @@ piece the agent depends on and says what to do about anything that fails.
 
 | | Linux | Windows |
 |---|---|---|
-| Config | `/etc/camagent/camagent.toml` | `C:\ProgramData\camagent\camagent.toml` |
+| Shared settings | `/etc/camagent/camagent.toml` | `C:\ProgramData\camagent\camagent.toml` |
+| Cameras | `/etc/camagent/cameras/<camera>.toml` | `C:\ProgramData\camagent\cameras\<camera>.toml` |
+| Live status | `/var/lib/camagent/status.json` | `C:\ProgramData\camagent\status.json` |
 | Program | `/opt/camagent/venv` | `C:\ProgramData\camagent\venv` |
 | Logs | `journalctl -u camagent -f` | `C:\ProgramData\camagent\logs` |
 
 The config contains passwords and is readable only by administrators and the service.
+On Linux, after upgrading from 0.1.x, run `sudo camagent install-service` once so `camagent list` can show live status.
 
 ## MQTT topics
 

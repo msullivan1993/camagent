@@ -39,7 +39,7 @@ def _service_state() -> str:
         return "unknown"
 
 
-def run(config_path=None):
+def run(config_path=None, camera_id=None):
     r = Report()
     path = config.default_config_path() if not config_path else config_path
     admin_hint = "an administrator Command Prompt or PowerShell" if os.name == "nt" else "sudo"
@@ -54,28 +54,28 @@ def run(config_path=None):
 
     # --- config ---
     try:
-        cfg = config.load(path)
-        r.line(OK, "Config", str(path))
-    except FileNotFoundError:
-        r.line(FAIL, "Config", f"not found at {path}", "camagent configure")
-        return _summary(r)
+        main, cams, problems = config.load_all(path)
     except PermissionError:
         r.line(FAIL, "Config", f"can't read {path}", f"run this from {admin_hint}")
         return _summary(r)
     except Exception as e:
         r.line(FAIL, "Config", f"can't parse {path} ({e})", "fix the file, or run: camagent configure")
         return _summary(r)
+    for p in problems:
+        r.line(FAIL, "Camera file", p, "fix or remove that file, or run: camagent configure")
+    if not cams:
+        r.line(FAIL, "Cameras", "none set up", "camagent add")
+        return _summary(r)
+    if camera_id:
+        cams = [c for c in cams if c["platform"]["camera_id"] == camera_id]
+        if not cams:
+            r.line(FAIL, "Camera", f"'{camera_id}' isn't set up here", "camagent list")
+            return _summary(r)
+    else:
+        r.line(OK, "Cameras", f"{len(cams)} set up")
 
-    from .agent import REQUIRED, REQUIRED_STREAM
-    needed = list(REQUIRED) + (list(REQUIRED_STREAM) if cfg["stream"].get("enabled", True) else [])
-    missing = [f"[{s}] {k}" for s, k in needed if not cfg[s].get(k)]
-    if missing:
-        r.line(FAIL, "Config values", "missing " + ", ".join(missing), "camagent configure")
-
-    cam, plat = cfg["camera"], cfg["platform"]
-
-    # --- ffmpeg ---
-    ffmpeg = camera.find_ffmpeg(cfg["stream"].get("ffmpeg", ""))
+    # --- ffmpeg (shared) ---
+    ffmpeg = camera.find_ffmpeg(cams[0]["stream"].get("ffmpeg", ""))
     if ffmpeg:
         try:
             first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True, timeout=10).stdout.splitlines()[0]
@@ -86,14 +86,38 @@ def run(config_path=None):
         r.line(FAIL, "ffmpeg", "not found", camera.ffmpeg_install_hint())
     ffprobe = camera.find_ffprobe(ffmpeg)
 
-    # --- camera ---
+    for cfg in cams:
+        _check_camera(r, cfg, ffprobe)
+
+    # --- service ---
+    print()
+    state = _service_state()
+    if state == "running":
+        r.line(OK, "Service", "running")
+    elif state == "not installed":
+        r.line(WARN, "Service", "not installed", "camagent install-service")
+    else:
+        r.line(FAIL, "Service", state, "camagent restart, then check the logs")
+
+    return _summary(r)
+
+
+def _check_camera(r, cfg, ffprobe):
+    cam, plat = cfg["camera"], cfg["platform"]
+    cid = plat.get("camera_id") or "?"
+    print(f"\n--- camera {cid} ---")
+    from .agent import missing_settings
+    missing = missing_settings(cfg)
+    if missing:
+        r.line(FAIL, "Settings", "missing " + ", ".join(missing), f"camagent configure {cid}")
+
     if cam.get("host") and cam.get("ptz", True):
         try:
             info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
             r.line(OK, "Camera ONVIF", f"{info['manufacturer']} {info['model']} at {cam['host']}")
             if not any(p["ptz"] for p in info["profiles"]):
                 r.line(WARN, "Camera PTZ", "no PTZ profile found",
-                       "set [camera] ptz = false if this is a fixed camera")
+                       f"set ptz = false in {cfg.get('_source')} if this is a fixed camera")
         except Exception as e:
             r.line(FAIL, "Camera ONVIF", camera.friendly_error(e),
                    "check the camera's IP, ONVIF port, login, and that its clock is set by NTP")
@@ -111,9 +135,8 @@ def run(config_path=None):
                            "set the camera's main stream to H.264")
             else:
                 r.line(FAIL, "Camera stream", f"can't read {config.strip_auth(cam['rtsp_url'])}",
-                       "check the RTSP URL and camera login (camagent configure can search for it)")
+                       f"check the RTSP URL and camera login (camagent configure {cid})")
 
-    # --- server ---
     host = plat.get("ingest_host")
     if host:
         try:
@@ -126,20 +149,10 @@ def run(config_path=None):
         from .configure import test_mqtt
         ok, msg = test_mqtt(cfg)
         if ok:
-            r.line(OK, "MQTT broker", f"{plat['mqtt_host']}: {msg}")
+            r.line(OK, "Server login", f"{plat['mqtt_host']}: {msg}")
         else:
-            r.line(FAIL, "MQTT broker", msg, "check [platform] mqtt_host, mqtt_port, and mqtt_password")
-
-    # --- service ---
-    state = _service_state()
-    if state == "running":
-        r.line(OK, "Service", "running")
-    elif state == "not installed":
-        r.line(WARN, "Service", "not installed", "camagent install-service")
-    else:
-        r.line(FAIL, "Service", state, "camagent restart, then check the logs")
-
-    return _summary(r)
+            r.line(FAIL, "Server login", msg,
+                   f"generate a new settings block on the camera's Connection page, then: camagent configure {cid}")
 
 
 def _summary(r: Report):
