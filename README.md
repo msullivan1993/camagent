@@ -72,6 +72,16 @@ Run it again at any time to change settings; Enter keeps the current value.
 If a step fails (ONVIF login rejected, stream unreadable, server login refused), setup stops and
 offers to go back and fix it instead of saving settings that won't work.
 
+**Setup checks this computer first:** Python, ffmpeg (and offers to install it with winget or apt if
+it's missing), SRT support in that ffmpeg build, ffprobe, and on Windows whether the computer goes to
+sleep (offering to turn that off, since a sleeping computer takes the camera offline).
+
+**Setup measures the stream** for a few seconds and suggests improvements when they'd help: frame rate
+(15-20 fps is plenty for weather), bitrate (about 4 Mbps capped VBR for 1080p), keyframe interval
+(about 2 seconds), and whether frames are being dropped. It also checks the camera's resolution limit
+on YonderView (1080p unless raised) so a stream isn't declined after setup. `camagent doctor` runs the
+same checks any time.
+
 **Video must be H.264.** Browsers can't reliably play H.265 (HEVC). Setup lists H.264 streams
 first, flags others, and stops if the stream it reads isn't H.264: change the stream to H.264 in
 the camera's web page (and turn off "smart codec" / H.264+), or pick another stream such as the

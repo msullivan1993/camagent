@@ -45,6 +45,7 @@ class CameraAgent:
         self.started = time.time()
         self.stopping = threading.Event()
         self.mqtt_connected = False
+        self.server = {"max_height": None, "declined": ""}
 
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
@@ -104,6 +105,9 @@ class CameraAgent:
         if self.ptz:
             self.ptz.settings.update({k: bool(new.get(k, False)) for k in ("invert_pan", "invert_tilt")})
             self.log.info("camera settings: %s", self.ptz.settings)
+        self.server = {"max_height": new.get("max_height"), "declined": new.get("declined") or ""}
+        if self.server["declined"]:
+            self.log.error("YonderView declined this camera's video: %s", self.server["declined"])
 
     def _handle(self, cmd):
         op = cmd.get("op")
@@ -133,7 +137,8 @@ class CameraAgent:
             "ptz": {"enabled": bool(self.ptz),
                     "available": bool(self.ptz and self.ptz.available),
                     "connected": bool(self.ptz and self.ptz.connected)},
-            "uplink": dict(self.uplink.stats) if self.uplink else None,
+            "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
+                      if self.uplink else None,
         }
 
     def _publish_telemetry(self):
@@ -154,6 +159,7 @@ class CameraAgent:
             "last_error": (up or {}).get("last_error", ""),
             "ptz": None if not self.ptz else ("connected" if self.ptz.connected else
                                               "unavailable" if not self.ptz.available else "connecting"),
+            "declined": self.server.get("declined", ""),
         }
 
     # ---------- lifecycle ----------

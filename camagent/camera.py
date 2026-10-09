@@ -152,9 +152,8 @@ def ffmpeg_install_hint() -> str:
 
 
 def find_ffmpeg(configured: str = "") -> str:
-    if configured and Path(configured).exists():
-        return configured
-    return shutil.which("ffmpeg") or ""
+    from .prereqs import find_ffmpeg as _find
+    return _find(configured)
 
 
 def find_ffprobe(ffmpeg: str = "") -> str:
@@ -213,3 +212,71 @@ def scan_rtsp_paths(ffprobe, host, user, password, port=554, progress=None) -> l
         if streams:
             found.append({"vendor": vendor, "rtsp_url": url, "streams": streams})
     return found
+
+
+def measure_stream(ffprobe: str, url: str, seconds: int = 6):
+    """Watch the stream for a few seconds (without decoding) and report what it really sends:
+    {"declared_fps", "actual_fps", "kbps", "keyframe_s", "height"}. Any value may be None."""
+    if not ffprobe:
+        return {}
+    cmd = [ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
+           "-read_intervals", f"%+{seconds}",
+           "-show_entries", "stream=avg_frame_rate,r_frame_rate,height:packet=pts_time,size,flags",
+           "-of", "json", url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 15)
+        data = json.loads(r.stdout or "{}")
+    except (subprocess.TimeoutExpired, OSError, ValueError):
+        return {}
+    st = (data.get("streams") or [{}])[0]
+
+    def rate(text):
+        try:
+            n, _, d = str(text).partition("/")
+            v = float(n) / float(d or 1)
+            return round(v, 2) if 1 <= v <= 120 else None
+        except (ValueError, ZeroDivisionError):
+            return None
+
+    pkts = [p for p in data.get("packets", []) if p.get("pts_time") not in (None, "N/A")]
+    out = {"declared_fps": rate(st.get("avg_frame_rate")) or rate(st.get("r_frame_rate")),
+           "height": st.get("height"), "actual_fps": None, "kbps": None, "keyframe_s": None}
+    if len(pkts) >= 2:
+        t = [float(p["pts_time"]) for p in pkts]
+        span = max(t) - min(t)
+        if span > 0.5:
+            out["actual_fps"] = round((len(pkts) - 1) / span, 1)
+            out["kbps"] = round(sum(int(p.get("size", 0)) for p in pkts) * 8 / 1000 / span)
+        keys = [float(p["pts_time"]) for p in pkts if "K" in str(p.get("flags", ""))]
+        if len(keys) >= 2:
+            gaps = [b - a for a, b in zip(keys, keys[1:])]
+            out["keyframe_s"] = round(sum(gaps) / len(gaps), 1)
+        elif len(keys) <= 1 and span >= seconds - 1:
+            out["keyframe_s"] = float(seconds)       # at most one keyframe in the window: at least this long
+    return out
+
+
+def stream_advice(m: dict, max_height=None):
+    """Plain-language suggestions from measure_stream()."""
+    tips = []
+    fps, actual, kbps, gop, h = (m.get("declared_fps"), m.get("actual_fps"), m.get("kbps"),
+                                 m.get("keyframe_s"), m.get("height"))
+    if max_height and h and h > max_height:
+        tips.append(f"The stream is {h}p but this camera's limit on YonderView is {max_height}p: it would be "
+                    f"declined. Set the camera's stream to {max_height}p or lower, or pick its sub-stream.")
+    if fps and fps > 20.5:
+        tips.append(f"It runs at {fps:g} fps. Weather looks just as good at 15-20 fps, and the saved upload "
+                    "goes into picture quality instead.")
+    if fps and actual and actual < 0.85 * fps:
+        tips.append(f"Only {actual:g} of {fps:g} frames per second actually arrived. In low light many cameras "
+                    "slow down on their own; otherwise the camera may be overloaded.")
+    if kbps and kbps > 8000:
+        tips.append(f"It's using about {kbps / 1000:.1f} Mbps. Around 4 Mbps (capped VBR, max about 6) is plenty "
+                    "for 1080p and much easier on the upload.")
+    elif kbps and h and h >= 1080 and kbps < 1500:
+        tips.append(f"It's only about {kbps / 1000:.1f} Mbps at {h}p, which can look soft in rain or wind. "
+                    "Around 4 Mbps (capped VBR) is a good target, if the upload allows it.")
+    if gop and gop > 3:
+        tips.append(f"Keyframes come about every {gop:g} seconds. Set the camera's I-frame interval to about "
+                    "2 seconds (twice the frame rate) so the video starts faster and plays smoother.")
+    return tips

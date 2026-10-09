@@ -26,7 +26,7 @@ class Uplink(threading.Thread):
         self._last_frame_at = time.time()
         self._stderr = collections.deque(maxlen=20)
         self.stats = {
-            "running": False, "fps": 0.0, "bitrate_kbps": 0.0, "speed": 0.0,
+            "running": False, "fps": 0.0, "fps_camera": 0.0, "bitrate_kbps": 0.0, "speed": 0.0,
             "frames": 0, "restarts": 0, "started_at": None, "last_error": "",
         }
 
@@ -52,7 +52,13 @@ class Uplink(threading.Thread):
         return cmd
 
     # ---------- output readers ----------
+    WINDOW_S = 10
+
     def _read_progress(self, proc):
+        """ffmpeg's own fps/bitrate are averages since it started. Count frames and bytes over the last
+        10 seconds instead, so the numbers show what the camera is really sending right now."""
+        from collections import deque
+        window = deque()                       # (time, frames, total bytes)
         block = {}
         for line in proc.stdout:
             key, _, value = line.strip().partition("=")
@@ -60,13 +66,20 @@ class Uplink(threading.Thread):
             if key != "progress":
                 continue
             try:
+                now = time.time()
                 frames = int(block.get("frame", "0") or 0)
                 if frames > self.stats["frames"]:
-                    self._last_frame_at = time.time()
+                    self._last_frame_at = now
                 self.stats["frames"] = frames
-                self.stats["fps"] = float(block.get("fps", "0") or 0)
-                br = block.get("bitrate", "0").replace("kbits/s", "").strip()
-                self.stats["bitrate_kbps"] = float(br) if br not in ("", "N/A") else 0.0
+                size = int(block.get("total_size", "0") or 0) if block.get("total_size", "N/A") != "N/A" else 0
+                window.append((now, frames, size))
+                while window and now - window[0][0] > self.WINDOW_S:
+                    window.popleft()
+                t0, f0, s0 = window[0]
+                if now - t0 >= 2:
+                    self.stats["fps"] = round((frames - f0) / (now - t0), 1)
+                    self.stats["bitrate_kbps"] = round((size - s0) * 8 / 1000 / (now - t0), 1) if size else 0.0
+                self.stats["fps_camera"] = self.stats["fps"]
                 sp = block.get("speed", "0").replace("x", "").strip()
                 self.stats["speed"] = float(sp) if sp not in ("", "N/A") else 0.0
             except ValueError:

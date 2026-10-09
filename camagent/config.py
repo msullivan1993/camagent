@@ -21,6 +21,7 @@ DEFAULTS = {
         "rtsp_url": "",          # without credentials; they are added at runtime
         "ptz": True,             # set false for fixed cameras
         "ptz_profile": "",       # ONVIF profile token; blank = first profile with PTZ
+        "fps_configured": 0,     # the camera's own frame-rate setting (read over ONVIF during setup)
     },
     "stream": {
         "enabled": True,
@@ -48,7 +49,7 @@ DEFAULTS = {
     },
     "update": {
         "repo": DEFAULT_REPO,
-        "ref": "main",
+        "ref": "",               # blank = the latest release
     },
 }
 

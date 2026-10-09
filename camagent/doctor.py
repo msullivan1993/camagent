@@ -82,12 +82,23 @@ def run(config_path=None, camera_id=None):
         except Exception:
             first = ffmpeg
         r.line(OK, "ffmpeg", first)
+        from . import prereqs
+        if prereqs.srt_supported(ffmpeg) is False:
+            r.line(FAIL, "ffmpeg SRT support", "this ffmpeg build can't send SRT",
+                   "install a full build (Windows: winget install -e --id Gyan.FFmpeg)")
     else:
         r.line(FAIL, "ffmpeg", "not found", camera.ffmpeg_install_hint())
     ffprobe = camera.find_ffprobe(ffmpeg)
 
     for cfg in cams:
         _check_camera(r, cfg, ffprobe)
+
+    # --- power ---
+    from . import prereqs
+    mins = prereqs.sleep_minutes()
+    if mins:
+        r.line(WARN, "Sleep", f"this computer sleeps after {mins} minutes on AC power",
+               "powercfg /change standby-timeout-ac 0   (or Settings > System > Power)")
 
     # --- service ---
     print()
@@ -150,9 +161,25 @@ def _check_camera(r, cfg, ffprobe):
         ok, msg = test_mqtt(cfg)
         if ok:
             r.line(OK, "Server login", f"{plat['mqtt_host']}: {msg}")
+            declined = (cfg.get("_server") or {}).get("declined")
+            if declined:
+                r.line(FAIL, "YonderView", f"video declined: {declined}",
+                       "change the camera's stream, then use 'Check again now' on the camera's page")
         else:
             r.line(FAIL, "Server login", msg,
                    f"generate a new settings block on the camera's Connection page, then: camagent configure {cid}")
+
+    if cam.get("rtsp_url") and ffprobe:
+        m = camera.measure_stream(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
+        if m.get("actual_fps"):
+            r.line(OK, "Stream measured",
+                   f"{m.get('height') or '?'}p, {m['actual_fps']:g} fps"
+                   f"{' of ' + format(m['declared_fps'], 'g') if m.get('declared_fps') else ''}"
+                   f"{', ' + format(m['kbps'] / 1000, '.1f') + ' Mbps' if m.get('kbps') else ''}"
+                   f"{', keyframe every ' + format(m['keyframe_s'], 'g') + ' s' if m.get('keyframe_s') else ''}")
+        limit = (cfg.get("_server") or {}).get("max_height")
+        for tip in camera.stream_advice(m, limit):
+            r.line(FAIL if "would be declined" in tip else WARN, "Stream tip", tip)
 
 
 def _summary(r: Report):
