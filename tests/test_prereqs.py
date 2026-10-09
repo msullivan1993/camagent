@@ -33,3 +33,12 @@ with mock.patch("camagent.camera.find_ffmpeg", side_effect=lambda *a: next(found
 assert (ff, fp) == ("C:/ffmpeg/bin/ffmpeg.exe", "C:/ffmpeg/bin/ffprobe.exe")
 inst.assert_called_once(); nosleep.assert_called_once()
 print("prereqs OK")
+
+# ONVIF must not try to write a cache into a home folder (the Linux service account has none)
+from camagent import camera, service  # noqa: E402
+with mock.patch("onvif.ONVIFCamera") as cam:
+    camera.onvif_connect("10.0.0.5", 80, "u", "p")
+assert cam.call_args.kwargs.get("no_cache") is True
+unit = service._linux_unit("/etc/camagent/camagent.toml")
+assert "Environment=HOME=/var/lib/camagent" in unit and "StateDirectory=camagent" in unit
+print("service home OK")

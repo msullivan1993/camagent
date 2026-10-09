@@ -51,6 +51,8 @@ StartLimitIntervalSec=0
 [Service]
 {user}StateDirectory=camagent
 Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/var/lib/camagent
+Environment=XDG_CACHE_HOME=/var/lib/camagent/cache
 ExecStart={sys.executable} -m camagent run --config {config_path}
 Restart=always
 RestartSec=5

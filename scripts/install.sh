@@ -28,7 +28,7 @@ if sys.version_info < (3, 11):
 EOF
 
 echo "==> Creating service account and folders"
-id camagent >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin camagent
+id camagent >/dev/null 2>&1 || useradd --system --home-dir /var/lib/camagent --no-create-home --shell /usr/sbin/nologin camagent
 mkdir -p "$APP" "$ETC"
 chown root:camagent "$ETC"
 chmod 750 "$ETC"
