@@ -34,9 +34,13 @@ with mock.patch("camagent.camera.subprocess.run", return_value=mock.Mock(stdout=
 assert (m["declared_fps"], m["actual_fps"], m["height"], m["keyframe_s"]) == (30.0, 15.0, 1440, 4.0), m
 assert 3900 < m["kbps"] < 4100, m
 tips = " ".join(camera.stream_advice(m, max_height=1080))
-assert "would be declined" in tips and "30 fps" in tips and "Only 15" in tips and "I-frame interval" in tips, tips
-assert camera.stream_advice({"declared_fps": 15, "actual_fps": 15, "kbps": 4000, "keyframe_s": 2, "height": 1080},
-                            max_height=1080) == []
+assert "would be declined" in tips and "Only 15" in tips and "30 fps" not in tips, tips    # no frame-rate opinions
+assert "I-frame" not in tips                                                               # 4 s keyframes are allowed
+assert camera.stream_advice({"declared_fps": 30, "actual_fps": 30, "kbps": 12000, "keyframe_s": 2, "height": 1440},
+                            max_height=1440) == []                                         # high bitrate is the host's call
+assert "needs one" in " ".join(camera.stream_advice({"keyframe_s": 6}))
+assert camera.stream_summary({"height": 1080, "actual_fps": 30, "kbps": 4200, "keyframe_s": 2}) == \
+    "1080p, 30 fps, about 4.2 Mbps, keyframe every 2 s"
 
 # 3. Setup stops when the stream is over the camera's limit (limit comes from the server)
 d = Path(tempfile.mkdtemp()); main = d / "camagent.toml"

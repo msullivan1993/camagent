@@ -76,11 +76,11 @@ offers to go back and fix it instead of saving settings that won't work.
 it's missing), SRT support in that ffmpeg build, ffprobe, and on Windows whether the computer goes to
 sleep (offering to turn that off, since a sleeping computer takes the camera offline).
 
-**Setup measures the stream** for a few seconds and suggests improvements when they'd help: frame rate
-(15-20 fps is plenty for weather), bitrate (about 4 Mbps capped VBR for 1080p), keyframe interval
-(about 2 seconds), and whether frames are being dropped. It also checks the camera's resolution limit
-on YonderView (1080p unless raised) so a stream isn't declined after setup. `camagent doctor` runs the
-same checks any time.
+**Setup measures the stream** for a few seconds and shows what the camera sends (resolution, frame
+rate, bitrate, keyframe interval). It only raises things that cause problems: a stream over the camera's
+resolution limit on YonderView, keyframes more than 4 seconds apart, or frames being dropped.
+Recommended (not required): 1080p at 30 fps, 4-6 Mbps, keyframe every 2 seconds. `camagent doctor` runs
+the same checks any time.
 
 **Video must be H.264.** Browsers can't reliably play H.265 (HEVC). Setup lists H.264 streams
 first, flags others, and stops if the stream it reads isn't H.264: change the stream to H.264 in

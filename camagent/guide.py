@@ -38,13 +38,15 @@ when the camera's time is far off.
 
 STREAM = """Step 2 of 4: the stream
 Cameras usually offer a "main" stream (full quality) and a smaller "sub" stream.
-Send the main stream. For weather, these camera settings work best
-(find them under Video, Encode or Camera > Video in the camera's web page):
-  * Codec: H.264 (High profile, often shown as "H.264H"). Not H.265.
-    Turn off "smart codec", "H.264+" or similar.
-  * Resolution: 1080p (unless YonderView has approved more for this camera)
-  * Frame rate: 15-20 fps          * Bitrate: about 4 Mbps, VBR capped near 6
-  * I-frame (keyframe) interval: twice the frame rate, e.g. 30 at 15 fps
+Send the main stream.
+  Required:     H.264 (not H.265); within this camera's resolution limit on
+                YonderView (1080p unless raised); a keyframe at least every
+                4 seconds. Turn off "smart codec" / "H.264+" options.
+  Recommended:  1080p at 30 fps, 4-6 Mbps (VBR capped near 8), keyframe
+                every 2 seconds (I-frame interval 60 at 30 fps).
+  Everything else is up to you. Higher quality is welcome if your upload can
+  carry it. (Settings are under Video, Encode or Camera > Video in the
+  camera's own web page.)
 """
 
 RTSP_PATHS = """If you know your camera's brand, its RTSP address usually looks like:

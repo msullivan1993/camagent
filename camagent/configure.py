@@ -199,13 +199,11 @@ def step_check_stream(cfg, ffprobe):
     print("  Measuring what the camera actually sends (a few seconds)...")
     m = camera.measure_stream(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
     cfg["_measure"] = m
+    tips = camera.stream_advice(m)
     if m.get("actual_fps"):
-        print(f"  {m.get('height') or '?'}p, {m['actual_fps']:g} fps"
-              f"{' (camera says ' + format(m['declared_fps'], 'g') + ')' if m.get('declared_fps') else ''}"
-              f"{', about ' + format(m['kbps'] / 1000, '.1f') + ' Mbps' if m.get('kbps') else ''}"
-              f"{', keyframe every ' + format(m['keyframe_s'], 'g') + ' s' if m.get('keyframe_s') else ''}")
-    for tip in camera.stream_advice(m):
-        print(f"  Tip: {tip}")
+        print(f"  Your camera: {camera.stream_summary(m)}." + ("" if tips else " Meets the requirements."))
+    for tip in tips:
+        print(f"  Note: {tip}")
 
     has_audio = any(x.get("codec_type") == "audio" for x in streams)
     if has_audio:

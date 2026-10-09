@@ -172,14 +172,10 @@ def _check_camera(r, cfg, ffprobe):
     if cam.get("rtsp_url") and ffprobe:
         m = camera.measure_stream(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
         if m.get("actual_fps"):
-            r.line(OK, "Stream measured",
-                   f"{m.get('height') or '?'}p, {m['actual_fps']:g} fps"
-                   f"{' of ' + format(m['declared_fps'], 'g') if m.get('declared_fps') else ''}"
-                   f"{', ' + format(m['kbps'] / 1000, '.1f') + ' Mbps' if m.get('kbps') else ''}"
-                   f"{', keyframe every ' + format(m['keyframe_s'], 'g') + ' s' if m.get('keyframe_s') else ''}")
+            r.line(OK, "Stream measured", camera.stream_summary(m))
         limit = (cfg.get("_server") or {}).get("max_height")
         for tip in camera.stream_advice(m, limit):
-            r.line(FAIL if "would be declined" in tip else WARN, "Stream tip", tip)
+            r.line(FAIL if "would be declined" in tip or "needs one" in tip else WARN, "Stream", tip)
 
 
 def _summary(r: Report):

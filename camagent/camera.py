@@ -257,26 +257,25 @@ def measure_stream(ffprobe: str, url: str, seconds: int = 6):
 
 
 def stream_advice(m: dict, max_height=None):
-    """Plain-language suggestions from measure_stream()."""
+    """Only things that actually cause problems. Frame rate and bitrate are the host's choice."""
     tips = []
-    fps, actual, kbps, gop, h = (m.get("declared_fps"), m.get("actual_fps"), m.get("kbps"),
-                                 m.get("keyframe_s"), m.get("height"))
+    fps, actual, gop, h = m.get("declared_fps"), m.get("actual_fps"), m.get("keyframe_s"), m.get("height")
     if max_height and h and h > max_height:
         tips.append(f"The stream is {h}p but this camera's limit on YonderView is {max_height}p: it would be "
                     f"declined. Set the camera's stream to {max_height}p or lower, or pick its sub-stream.")
-    if fps and fps > 20.5:
-        tips.append(f"It runs at {fps:g} fps. Weather looks just as good at 15-20 fps, and the saved upload "
-                    "goes into picture quality instead.")
     if fps and actual and actual < 0.85 * fps:
         tips.append(f"Only {actual:g} of {fps:g} frames per second actually arrived. In low light many cameras "
                     "slow down on their own; otherwise the camera may be overloaded.")
-    if kbps and kbps > 8000:
-        tips.append(f"It's using about {kbps / 1000:.1f} Mbps. Around 4 Mbps (capped VBR, max about 6) is plenty "
-                    "for 1080p and much easier on the upload.")
-    elif kbps and h and h >= 1080 and kbps < 1500:
-        tips.append(f"It's only about {kbps / 1000:.1f} Mbps at {h}p, which can look soft in rain or wind. "
-                    "Around 4 Mbps (capped VBR) is a good target, if the upload allows it.")
-    if gop and gop > 3:
-        tips.append(f"Keyframes come about every {gop:g} seconds. Set the camera's I-frame interval to about "
-                    "2 seconds (twice the frame rate) so the video starts faster and plays smoother.")
+    if gop and gop > 4:
+        tips.append(f"Keyframes come only about every {gop:g} seconds; YonderView needs one at least every 4 "
+                    "(every 2 is best). Set the camera's I-frame interval to about twice its frame rate.")
     return tips
+
+
+def stream_summary(m: dict) -> str:
+    """One line describing what the camera sends, e.g. '1440p, 30 fps, about 8.1 Mbps, keyframe every 2 s'."""
+    if not m.get("actual_fps"):
+        return ""
+    return (f"{m.get('height') or '?'}p, {m['actual_fps']:g} fps"
+            f"{', about ' + format(m['kbps'] / 1000, '.1f') + ' Mbps' if m.get('kbps') else ''}"
+            f"{', keyframe every ' + format(m['keyframe_s'], 'g') + ' s' if m.get('keyframe_s') else ''}")
