@@ -100,6 +100,24 @@ def run(config_path=None, camera_id=None):
         r.line(WARN, "Sleep", f"this computer sleeps after {mins} minutes on AC power",
                "powercfg /change standby-timeout-ac 0   (or Settings > System > Power)")
 
+    # --- automatic updates ---
+    try:
+        auto = config.load_or_defaults(config_path)["update"].get("auto", True)
+        sched = service.update_schedule_installed()
+        if auto and sched:
+            r.line(OK, "Automatic updates", "on (nightly)")
+        elif auto:
+            r.line(WARN, "Automatic updates", "on in settings, but not scheduled", "camagent install-service")
+        else:
+            r.line(WARN, "Automatic updates", "off", "turn on from the camagent menu")
+        logf = config.base_dir() / "logs" / "update.log"
+        if logf.exists():
+            last = logf.read_text(encoding="utf-8").strip().splitlines()[-1:]
+            if last:
+                r.line(OK, "Last update check", last[0])
+    except Exception:  # noqa: BLE001
+        pass
+
     # --- service ---
     print()
     state = _service_state()

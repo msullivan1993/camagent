@@ -91,5 +91,5 @@ Write-Host ""
 if (Test-Path (Join-Path $Base "camagent.toml")) {
     Write-Host "Existing config kept. Restart to apply the update:  camagent restart"
 } else {
-    Write-Host "Next step (in this Administrator window):  camagent configure"
+    Write-Host "Next step (in this Administrator window):  camagent   (then choose Add a camera)"
 }

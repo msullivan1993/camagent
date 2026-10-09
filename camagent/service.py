@@ -116,6 +116,9 @@ def install(config_path=None):
         _run(["systemctl", "enable", SERVICE])
         _run(["systemctl", "restart", SERVICE])
         print("Service installed. Logs: journalctl -u camagent -f")
+    from .config import load_or_defaults
+    if load_or_defaults(config_path)["update"].get("auto", True) and not update_schedule_installed():
+        install_update_schedule(config_path)
 
 
 def uninstall():
@@ -129,6 +132,8 @@ def uninstall():
         _run(["systemctl", "disable", "--now", SERVICE], check=False)
         UNIT_PATH.unlink(missing_ok=True)
         _run(["systemctl", "daemon-reload"], check=False)
+    if update_schedule_installed():
+        remove_update_schedule()
     print("Service removed.")
 
 
@@ -157,3 +162,59 @@ def restart():
         _run([exe, "restart"])
     else:
         _run(["systemctl", "restart", SERVICE])
+
+
+# ---------- nightly update schedule ----------
+TASK_NAME = "camagent update"
+TIMER_PATH = Path("/etc/systemd/system/camagent-update.timer")
+TIMER_SERVICE_PATH = Path("/etc/systemd/system/camagent-update.service")
+
+
+def update_schedule_installed() -> bool:
+    if os.name == "nt":
+        return subprocess.run(["schtasks", "/Query", "/TN", TASK_NAME], capture_output=True).returncode == 0
+    return TIMER_PATH.exists()
+
+
+def install_update_schedule(config_path=None):
+    """Nightly around 3 AM (with a random delay so agents don't all check at once), as root / SYSTEM."""
+    _require_admin()
+    config_path = Path(config_path or default_config_path())
+    if os.name == "nt":
+        cmd = f'"{sys.executable}" -m camagent update --auto --jitter 3600 --config "{config_path}"'
+        _run(["schtasks", "/Create", "/TN", TASK_NAME, "/TR", cmd, "/SC", "DAILY", "/ST", "03:00",
+              "/RU", "SYSTEM", "/RL", "HIGHEST", "/F"])
+    else:
+        TIMER_SERVICE_PATH.write_text(f"""[Unit]
+Description=camagent nightly update check
+
+[Service]
+Type=oneshot
+ExecStart={sys.executable} -m camagent update --auto --config {config_path}
+""", encoding="utf-8")
+        TIMER_PATH.write_text("""[Unit]
+Description=camagent nightly update check
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+""", encoding="utf-8")
+        _run(["systemctl", "daemon-reload"])
+        _run(["systemctl", "enable", "--now", "camagent-update.timer"])
+    print("Automatic updates: on (nightly, around 3 AM).")
+
+
+def remove_update_schedule():
+    _require_admin()
+    if os.name == "nt":
+        _run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], check=False)
+    else:
+        _run(["systemctl", "disable", "--now", "camagent-update.timer"], check=False)
+        TIMER_PATH.unlink(missing_ok=True)
+        TIMER_SERVICE_PATH.unlink(missing_ok=True)
+        _run(["systemctl", "daemon-reload"], check=False)
+    print("Automatic updates: off.")

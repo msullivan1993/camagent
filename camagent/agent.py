@@ -106,6 +106,12 @@ class CameraAgent:
             self.ptz.settings.update({k: bool(new.get(k, False)) for k in ("invert_pan", "invert_tilt")})
             self.log.info("camera settings: %s", self.ptz.settings)
         self.server = {"max_height": new.get("max_height"), "declined": new.get("declined") or ""}
+        latency = new.get("latency_ms")
+        if latency and self.uplink:
+            latency = max(120, min(8000, int(latency)))
+            if latency != int(self.cfg["stream"].get("srt_latency_ms", 400)):
+                self.cfg["stream"]["srt_latency_ms"] = latency       # set on the camera's page on yonderview.net
+                self.uplink.restart_now(f"latency now {latency} ms")
         if self.server["declined"]:
             self.log.error("YonderView declined this camera's video: %s", self.server["declined"])
 
@@ -170,7 +176,7 @@ class CameraAgent:
         if self.ptz:
             self.ptz.start()
         p = self.cfg["platform"]
-        self.mq.connect_async(p["mqtt_host"], int(p["mqtt_port"]), keepalive=30)
+        self.mq.connect_async(p["mqtt_host"], int(p["mqtt_port"]), keepalive=20)   # notice a dead link fast
         self.mq.loop_start()
 
     def shutdown(self):

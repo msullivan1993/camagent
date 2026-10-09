@@ -76,6 +76,10 @@ offers to go back and fix it instead of saving settings that won't work.
 it's missing), SRT support in that ffmpeg build, ffprobe, and on Windows whether the computer goes to
 sleep (offering to turn that off, since a sleeping computer takes the camera offline).
 
+**Automatic updates** are on unless you turn them off during setup (or later from the menu): each night
+around 3 AM camagent installs a newer release if there is one, checks the cameras come back, and goes back
+to the previous version if they don't. Results are in `logs/update.log` and in `camagent doctor`.
+
 **Setup measures the stream** for a few seconds and shows what the camera sends (resolution, frame
 rate, bitrate, keyframe interval). It only raises things that cause problems: a stream over the camera's
 resolution limit on YonderView, keyframes more than 4 seconds apart, or frames being dropped.

@@ -382,6 +382,7 @@ def _finish(cam, main_path, others):
 
 
 def _apply(main_path):
+    _ask_auto_update(main_path)
     if service.is_installed():
         if yes("Restart the service to apply the change?", default=True):
             service.restart()
@@ -389,6 +390,33 @@ def _apply(main_path):
         service.install(main_path)
     else:
         print("Start it later with: camagent install-service   (or test it with: camagent run)")
+
+
+def _ask_auto_update(main_path):
+    """Asked once per computer. Automatic updates install new releases nightly and roll back if one fails."""
+    main = config.load_or_defaults(main_path)
+    if main["update"].get("asked"):
+        return
+    print("\nAutomatic updates install new camagent releases overnight (around 3 AM), check the cameras")
+    print("come back, and go back to the previous version if they don't.")
+    main["update"]["auto"] = yes("Keep camagent up to date automatically?", default=True)
+    main["update"]["asked"] = True
+    config.save_main(main, main_path)
+    if not main["update"]["auto"] and service.update_schedule_installed():
+        service.remove_update_schedule()
+    elif main["update"]["auto"] and service.is_installed() and not service.update_schedule_installed():
+        service.install_update_schedule(main_path)
+
+
+def toggle_auto_update(main_path=None):
+    main = config.load_or_defaults(main_path)
+    main["update"]["auto"] = not main["update"].get("auto", True)
+    main["update"]["asked"] = True
+    config.save_main(main, main_path)
+    if main["update"]["auto"]:
+        service.install_update_schedule(main_path)
+    elif service.update_schedule_installed():
+        service.remove_update_schedule()
 
 
 def _pick(cams, camera_id):

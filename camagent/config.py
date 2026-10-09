@@ -50,6 +50,8 @@ DEFAULTS = {
     "update": {
         "repo": DEFAULT_REPO,
         "ref": "",               # blank = the latest release
+        "auto": True,            # install new releases automatically, nightly around 3 AM
+        "asked": False,          # setup asked about automatic updates
     },
 }
 

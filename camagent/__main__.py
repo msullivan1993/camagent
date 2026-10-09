@@ -39,6 +39,8 @@ def main(argv=None):
     sub.add_parser("restart", help="restart the service")
     up = sub.add_parser("update", help="update from Git and restart")
     up.add_argument("--ref", help="branch or tag to install (default from config)")
+    up.add_argument("--auto", action="store_true", help="scheduled run: install only a newer release, verify, roll back if needed")
+    up.add_argument("--jitter", type=int, default=0, help=argparse.SUPPRESS)
     sub.add_parser("version", help="print the version")
 
     # allow --config after the subcommand too
@@ -109,7 +111,7 @@ def main(argv=None):
 
     elif args.cmd == "update":
         from .update import run
-        run(cfg_path, args.ref)
+        run(cfg_path, args.ref, auto=args.auto, jitter=args.jitter)
 
 
 if __name__ == "__main__":

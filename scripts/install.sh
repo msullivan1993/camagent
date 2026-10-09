@@ -48,5 +48,5 @@ if [ -f "$ETC/camagent.toml" ]; then
   echo "  sudo camagent restart"
 else
   echo "Next step:"
-  echo "  sudo camagent configure"
+  echo "  sudo camagent        (then choose Add a camera)"
 fi

@@ -63,6 +63,7 @@ patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch.object(configure.camera, "onvif_inspect", side_effect=OSError("no onvif")),
            mock.patch.object(configure, "test_mqtt", fake_mqtt),
            mock.patch.object(configure.service, "is_installed", lambda: False),
+           mock.patch.object(configure, "_ask_auto_update", lambda *a: None),
            mock.patch.object(configure.service, "is_admin", lambda: True)]
 for p in patches: p.start()
 configure.add(main)

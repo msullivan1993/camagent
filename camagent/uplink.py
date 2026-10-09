@@ -22,6 +22,7 @@ class Uplink(threading.Thread):
         self.cfg = cfg
         self.log = log or logging.getLogger(f"{cid}.uplink")
         self.proc = None
+        self._restart = threading.Event()
         self._halt = threading.Event()
         self._last_frame_at = time.time()
         self._stderr = collections.deque(maxlen=20)
@@ -98,8 +99,13 @@ class Uplink(threading.Thread):
             self.log.warning("ffmpeg: %s", line)
 
     # ---------- main loop ----------
+    def restart_now(self, reason=""):
+        """Restart ffmpeg right away with the current settings (e.g. a new latency). Not counted as a failure."""
+        self.log.info("restarting the stream%s", f" ({reason})" if reason else "")
+        self._restart.set()
+
     def run(self):
-        backoff = 2
+        backoff = 1                               # a dropped connection (e.g. a new Starlink address) retries fast
         stall = int(self.cfg["stream"].get("stall_seconds", 15))
         while not self._halt.is_set():
             try:
@@ -127,7 +133,13 @@ class Uplink(threading.Thread):
             threading.Thread(target=self._read_stderr, args=(self.proc,), daemon=True).start()
 
             # watchdog: ffmpeg can hang forever when a camera disappears
+            planned = False
             while self.proc.poll() is None and not self._halt.is_set():
+                if self._restart.is_set():
+                    self._restart.clear()
+                    planned = True
+                    self._kill()
+                    break
                 if time.time() - self._last_frame_at > stall:
                     self.log.warning("no new frames for %ss; restarting ffmpeg", stall)
                     self._kill()
@@ -139,12 +151,14 @@ class Uplink(threading.Thread):
             self.stats["running"] = False
             if self._halt.is_set():
                 break
+            if planned:
+                continue
             self.stats["restarts"] += 1
             self.stats["last_error"] = self._stderr[-1] if self._stderr else f"exit code {code}"
             self.log.warning("ffmpeg exited (code %s); %s", code, self.stats["last_error"])
 
             if time.time() - started > 60:      # it ran a while, so start the backoff over
-                backoff = 2
+                backoff = 1
             delay, backoff = backoff, min(backoff * 2, 60)
             self.log.info("restarting in %ss", delay)
             self._halt.wait(delay)

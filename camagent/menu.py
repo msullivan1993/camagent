@@ -24,6 +24,13 @@ def _elevate_or_explain() -> bool:
     return False
 
 
+def _auto_on(config_path=None):
+    try:
+        return bool(config.load_or_defaults(config_path)["update"].get("auto", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def _service_state():
     from .doctor import _service_state as state
     return state()
@@ -75,6 +82,8 @@ def run(config_path=None):
             (start_label, (service.restart if state != "not installed"
                            else lambda: service.install(config_path))),
             ("Update camagent", lambda: update.run(config_path)),
+            ("Automatic updates: " + ("on (turn off)" if _auto_on() else "off (turn on)"),
+             lambda: configure.toggle_auto_update(config_path)),
             ("Find cameras on the network", _discover),
         ]
         print(f"\n=== camagent {__version__} ===")
