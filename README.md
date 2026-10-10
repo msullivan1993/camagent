@@ -99,9 +99,6 @@ camagent doctor <camera>     # check one camera (or all of them, with no name)
 Upload bandwidth is the real limit: each camera needs roughly its own bitrate. Video is copied,
 not re-encoded, so CPU use stays low even on a Raspberry Pi.
 
-Upgrading from 0.1.x: the existing camera keeps working as is. The first time it's changed with
-`camagent configure`, it moves to the new layout (`cameras/<camera>.toml`) automatically.
-
 ## Commands
 
 | Command | What it does |
