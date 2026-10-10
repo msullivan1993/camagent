@@ -40,15 +40,6 @@ camagent configure
 The installers set up Python, ffmpeg, and Git if needed, install camagent into its own
 environment, and never overwrite an existing config. Run them again to upgrade.
 
-While the repository is private, give the installer a read-only token:
-
-```bash
-sudo CAMAGENT_REPO=https://TOKEN@github.com/msullivan1993/camagent.git bash install.sh
-```
-```powershell
-$env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
-```
-
 ## The menu
 
 Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
