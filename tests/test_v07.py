@@ -78,3 +78,15 @@ assert a.status()["weather"]["kind"] == "ecowitt"
 # --- the weather section is saved with the camera ---
 assert "weather" in config.CAMERA_SECTIONS
 print("v0.7 OK")
+
+# --- 0.7.1: the menu reopens itself after an update installs a new version ---
+from camagent import menu  # noqa: E402
+calls = []
+from camagent import update as _update  # noqa: E402
+with mock.patch.object(_update, "run"), mock.patch.object(menu, "relaunch", side_effect=lambda p: calls.append(p)):
+    with mock.patch.object(menu, "installed_version", return_value="9.9.9"):
+        menu._update_and_relaunch("cfg.toml")
+    with mock.patch.object(menu, "installed_version", return_value=menu.__version__):
+        menu._update_and_relaunch("cfg.toml")             # already current: stays put
+assert calls == ["cfg.toml"], calls
+print("v0.7.1 OK")

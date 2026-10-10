@@ -61,6 +61,39 @@ def _discover():
         print(f"  {c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip())
 
 
+def installed_version():
+    """The version now installed on disk (this menu may still be running an older one)."""
+    import subprocess
+    import sys
+    try:
+        out = subprocess.run([sys.executable, "-m", "camagent", "version"], capture_output=True, text=True, timeout=30)
+        return out.stdout.strip() or __version__
+    except Exception:  # noqa: BLE001
+        return __version__
+
+
+def relaunch(config_path=None):
+    """Start the menu again on the newly installed version, replacing this one."""
+    import os
+    import subprocess
+    import sys
+    args = [sys.executable, "-m", "camagent"] + (["--config", str(config_path)] if config_path else [])
+    print("Reopening camagent on the new version...\n")
+    sys.stdout.flush()
+    if os.name == "nt":                      # Windows: run the new menu here, then leave when it closes
+        raise SystemExit(subprocess.call(args))
+    os.execv(sys.executable, args)           # Linux/Pi: become the new menu in place
+
+
+def _update_and_relaunch(config_path=None):
+    from . import update
+    update.run(config_path)
+    new = installed_version()
+    if new != __version__:
+        print(f"\nUpdated from {__version__} to {new}.")
+        relaunch(config_path)
+
+
 def run(config_path=None):
     if not _elevate_or_explain():
         return
@@ -82,7 +115,7 @@ def run(config_path=None):
             ("Show the recent log", show_log),
             (start_label, (service.restart if state != "not installed"
                            else lambda: service.install(config_path))),
-            ("Update camagent", lambda: update.run(config_path)),
+            ("Update camagent", lambda: _update_and_relaunch(config_path)),
             ("Automatic updates: " + ("on (turn off)" if _auto_on() else "off (turn on)"),
              lambda: configure.toggle_auto_update(config_path)),
             ("Find cameras on the network", _discover),
