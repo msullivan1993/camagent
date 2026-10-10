@@ -49,6 +49,7 @@ class CameraAgent:
 
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
+        self.ptz_position = None       # last reported PTZ position (pan/tilt/zoom), for the map direction
 
         p = cfg["platform"]
         self.mq = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.cam_id)
@@ -142,10 +143,25 @@ class CameraAgent:
             "uptime_s": int(time.time() - self.started),
             "ptz": {"enabled": bool(self.ptz),
                     "available": bool(self.ptz and self.ptz.available),
-                    "connected": bool(self.ptz and self.ptz.connected)},
+                    "connected": bool(self.ptz and self.ptz.connected),
+                    "position": self.ptz_position},
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
         }
+
+    def track_position(self, stop):
+        """Report where the PTZ camera points: every 2 s while it's being moved (and for 20 s after), every
+        60 s when idle. Telemetry goes out only when the position actually changes, so the map cone follows."""
+        while not stop.is_set():
+            busy = self.ptz and time.time() - self.ptz.last_activity < 20
+            pos = self.ptz.position() if self.ptz else None
+            if pos is not None:
+                old = self.ptz_position or {}
+                moved = any(abs((pos.get(k) or 0) - (old.get(k) or 0)) > 0.002 for k in ("pan", "tilt", "zoom"))
+                if moved or not old:
+                    self.ptz_position = dict(pos, t=int(time.time()))
+                    self._publish_telemetry()
+            stop.wait(2 if busy else 60)
 
     def _publish_telemetry(self):
         try:
@@ -175,6 +191,8 @@ class CameraAgent:
             self.uplink.start()
         if self.ptz:
             self.ptz.start()
+            threading.Thread(target=self.track_position, args=(self.stopping,), daemon=True,
+                             name=f"ptzpos-{self.cam_id}").start()
         p = self.cfg["platform"]
         self.mq.connect_async(p["mqtt_host"], int(p["mqtt_port"]), keepalive=20)   # notice a dead link fast
         self.mq.loop_start()

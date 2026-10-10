@@ -72,11 +72,11 @@ def scenario(latest, healthy_after, auto=True):
     return calls
 
 c = scenario("v9.9.9", healthy_after=True)
-assert c[:3] == ["log: updating 0.5.0 -> v9.9.9", "v9.9.9", "restart"] and "log: updated to v9.9.9; cameras are streaming" in c, c
+assert c[:3] == [f"log: updating {update.__version__} -> v9.9.9", "v9.9.9", "restart"] and "log: updated to v9.9.9; cameras are streaming" in c, c
 c = scenario("v9.9.9", healthy_after=False)
-assert "v0.5.0" in c and any("rolled back to 0.5.0" in x for x in c), c                  # went back
-c = scenario("v0.5.0", healthy_after=True)
-assert c == ["log: up to date (0.5.0)"], c
+assert f"v{update.__version__}" in c and any(f"rolled back to {update.__version__}" in x for x in c), c                  # went back
+c = scenario(f"v{update.__version__}", healthy_after=True)
+assert c == [f"log: up to date ({update.__version__})"], c
 c = scenario("v9.9.9", healthy_after=True, auto=False)
 assert c == ["log: automatic updates are off; nothing to do"], c
 

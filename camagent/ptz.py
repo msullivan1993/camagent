@@ -1,6 +1,7 @@
 """ONVIF PTZ control: connects in the background, enforces a local stop timer, applies invert settings."""
 import logging
 import threading
+import time
 
 from .camera import friendly_error, onvif_connect
 
@@ -26,6 +27,7 @@ class PTZ:
         self._gen = 0
         self._stop = threading.Event()
         self._connecting = threading.Lock()
+        self.last_activity = 0.0       # time of the last move or preset, so position is checked often then
 
     # ---------- connection ----------
     def start(self):
@@ -119,6 +121,7 @@ class PTZ:
         v = (_clamp(pan), _clamp(tilt), _clamp(zoom))
         if v == (0.0, 0.0, 0.0):
             return self.stop()
+        self.last_activity = time.time()
         with self._lock:
             self._gen += 1
             if self._timer:
@@ -143,6 +146,7 @@ class PTZ:
 
     def goto_preset(self, preset):
         self._require()
+        self.last_activity = time.time()
         try:
             self.ptz.GotoPreset({"ProfileToken": self.token, "PresetToken": str(preset)})
         except Exception as e:
@@ -177,6 +181,25 @@ class PTZ:
         except Exception as e:
             self._lost(e)
             raise
+
+    def position(self):
+        """Where the camera points now, as ONVIF reports it: pan and tilt from -1 to 1, zoom from 0 to 1.
+        None when it can't say (not connected, or the camera doesn't report position)."""
+        if not (self.available and self.connected):
+            return None
+        try:
+            st = self.ptz.GetStatus({"ProfileToken": self.token})
+        except Exception as e:  # noqa: BLE001
+            self.log.debug("PTZ position unavailable: %s", e)
+            return None
+        pos = getattr(st, "Position", None)
+        pt = getattr(pos, "PanTilt", None) if pos else None
+        if pt is None or getattr(pt, "x", None) is None:
+            return None
+        zoom = getattr(getattr(pos, "Zoom", None), "x", None)
+        return {"pan": round(float(pt.x), 4), "tilt": round(float(pt.y or 0), 4),
+                "zoom": round(float(zoom), 4) if zoom is not None else None,
+                "space": getattr(pt, "space", "") or ""}
 
     def shutdown(self):
         self._stop.set()
