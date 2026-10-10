@@ -40,15 +40,6 @@ camagent configure
 The installers set up Python, ffmpeg, and Git if needed, install camagent into its own
 environment, and never overwrite an existing config. Run them again to upgrade.
 
-While the repository is private, give the installer a read-only token:
-
-```bash
-sudo CAMAGENT_REPO=https://TOKEN@github.com/msullivan1993/camagent.git bash install.sh
-```
-```powershell
-$env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
-```
-
 ## The menu
 
 Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
@@ -111,9 +102,6 @@ camagent doctor <camera>     # check one camera (or all of them, with no name)
 
 Upload bandwidth is the real limit: each camera needs roughly its own bitrate. Video is copied,
 not re-encoded, so CPU use stays low even on a Raspberry Pi.
-
-Upgrading from 0.1.x: the existing camera keeps working as is. The first time it's changed with
-`camagent configure`, it moves to the new layout (`cameras/<camera>.toml`) automatically.
 
 ## Commands
 
