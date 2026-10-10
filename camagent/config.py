@@ -42,6 +42,14 @@ DEFAULTS = {
         "mqtt_tls": False,
         "mqtt_password": "",
     },
+    "weather": {
+        "kind": "",               # tempest | weatherlink | ecowitt (blank = no weather station)
+        "host": "",               # station or gateway IP (WeatherLink Live, Ecowitt); Tempest is found automatically
+        "serial": "",             # Tempest station serial, to pick one if there are several
+        "name": "",
+        "elevation_m": 0,         # Tempest only: for sea-level pressure (it reports station pressure)
+        "interval_s": 30,
+    },
     "agent": {
         "max_move_ms": 2000,
         "telemetry_interval_s": 30,
@@ -55,7 +63,7 @@ DEFAULTS = {
     },
 }
 
-CAMERA_SECTIONS = ("camera", "stream", "platform")      # one file per camera, in cameras/
+CAMERA_SECTIONS = ("camera", "stream", "platform", "weather")      # one file per camera, in cameras/
 MAIN_SECTIONS = ("agent", "update")                     # shared settings, in camagent.toml
 
 SECTION_COMMENTS = {

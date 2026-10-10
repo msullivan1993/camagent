@@ -76,6 +76,10 @@ offers to go back and fix it instead of saving settings that won't work.
 it's missing), SRT support in that ffmpeg build, ffprobe, and on Windows whether the computer goes to
 sleep (offering to turn that off, since a sleeping computer takes the camera offline).
 
+**Weather station (beta):** camagent can read a Tempest, Davis WeatherLink Live or Ecowitt gateway on the
+same network and show its conditions on the camera's page. Menu: *Weather station (beta)*, or
+`camagent weather <camera>`.
+
 **Automatic updates** are on unless you turn them off during setup (or later from the menu): each night
 around 3 AM camagent installs a newer release if there is one, checks the cameras come back, and goes back
 to the previous version if they don't. Results are in `logs/update.log` and in `camagent doctor`.

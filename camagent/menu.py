@@ -77,6 +77,7 @@ def run(config_path=None):
             ("Add a camera", lambda: configure.add(config_path)),
             ("Change a camera's settings", lambda: configure.run(config_path)),
             ("Remove a camera", lambda: configure.remove(config_path)),
+            ("Weather station (beta)", lambda: configure.weather_station(config_path)),
             ("Check everything (doctor)", lambda: doctor.run(config_path)),
             ("Show the recent log", show_log),
             (start_label, (service.restart if state != "not installed"

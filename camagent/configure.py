@@ -533,6 +533,10 @@ def list_cameras(config_path=None):
             parts = [video, "server connected" if st.get("mqtt") else "server NOT connected"]
             if st.get("ptz"):
                 parts.append(f"PTZ {st['ptz']}")
+            wx = st.get("weather")
+            if wx:
+                parts.append(f"weather {wx['kind']}: " + (f"last reading {wx['age_s']}s ago" if wx.get("age_s") is not None
+                                                          else "no reading yet"))
             print("    status: " + "; ".join(parts))
         if st and st.get("declined"):
             print(f"    DECLINED by YonderView: {st['declined']}")
@@ -540,3 +544,87 @@ def list_cameras(config_path=None):
             print("    (stored in the old single-camera format; `camagent configure` will move it)")
     for p in problems:
         print(f"PROBLEM: {p}")
+
+
+# ---------- weather station (beta) ----------
+
+def _summary(r):
+    bits = []
+    if r.get("temp_c") is not None:
+        bits.append(f"{r['temp_c'] * 9 / 5 + 32:.0f}°F")
+    if r.get("wind_ms") is not None:
+        bits.append(f"wind {r['wind_ms'] * 2.23694:.0f} mph")
+    if r.get("humidity") is not None:
+        bits.append(f"{r['humidity']:.0f}% humidity")
+    if r.get("pressure_hpa") is not None:
+        bits.append(f"{r['pressure_hpa'] * 0.02953:.2f} inHg")
+    return ", ".join(bits) or "a reading with no common values"
+
+
+def weather_station(config_path=None, camera_id=None):
+    """Add, change or remove the local weather station for one camera (BETA)."""
+    from . import weather
+    main_path = Path(config_path or config.default_config_path())
+    _check_writable(main_path)
+    _, cams, _ = config.load_all(main_path)
+    if not cams:
+        raise SystemExit("No cameras are set up here. Add a camera first.")
+    cam = _pick(cams, camera_id)
+    if cam is None:
+        return
+    w = cam["weather"]
+    heading("Weather station (beta)")
+    print("camagent can read a weather station on this network and show its conditions on the camera's page.")
+    print("Supported: Tempest, Davis WeatherLink Live, Ecowitt gateways (GW1100, GW2000 and similar).")
+    if w.get("kind"):
+        print(f"\nThis camera uses: {w['kind']} {w.get('host') or w.get('serial') or ''}".rstrip())
+        if yes("Remove it?", default=False):
+            cam["weather"] = dict(config.DEFAULTS["weather"])
+            config.save_camera(cam, main_path)
+            print("Weather station removed from this camera.")
+            _apply(main_path)
+            return
+    kinds = [("tempest", "Tempest"), ("weatherlink", "Davis WeatherLink Live"), ("ecowitt", "Ecowitt gateway")]
+    kind = choose(kinds, lambda k: k[1], allow_none_text="Cancel")
+    if kind is None:
+        return
+    kind = kind[0]
+    new = dict(config.DEFAULTS["weather"], kind=kind)
+    if kind == "tempest":
+        print("Listening for Tempest stations on this network (15 seconds)...")
+        try:
+            found = weather.tempest_discover(15)
+        except RuntimeError as e:
+            raise SystemExit(str(e))
+        if not found:
+            raise SystemExit("No Tempest heard. It must be on the same network as this computer; check the hub's "
+                             "Wi-Fi and try again.")
+        serials = sorted(found)
+        new["serial"] = serials[0] if len(serials) == 1 else choose(serials, lambda s: f"Station {s}")
+        print(f"Found Tempest {new['serial']}.")
+        elev = ask("Elevation of the station in feet, for sea-level pressure (blank to skip pressure)", "")
+        try:
+            new["elevation_m"] = round(float(elev) * 0.3048) if elev else 0
+        except ValueError:
+            new["elevation_m"] = 0
+    else:
+        new["host"] = ask("The station's IP address on this network (from its app or your router)", w.get("host", ""))
+        if not new["host"]:
+            raise SystemExit("No address given; nothing changed.")
+    print("Reading the station (up to a minute for Tempest)...")
+    reader = weather.Reader(new)
+    try:
+        r = reader.read(wait=70)
+        uid = reader.station_id()
+    except Exception as e:  # noqa: BLE001
+        raise SystemExit(f"Couldn't read it: {e}")
+    finally:
+        reader.close()
+    if not r:
+        raise SystemExit("No reading arrived. Check the station is on and on this network, then try again.")
+    print(f"Got it ({uid}): {_summary(r)}")
+    new["name"] = ask("A name for this station (shown on the camera page)", w.get("name") or "Weather station")
+    cam["weather"] = new
+    config.save_camera(cam, main_path)
+    print("Saved. Conditions appear on the camera's page within a minute of the service restarting.")
+    _apply(main_path)

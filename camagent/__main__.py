@@ -41,6 +41,8 @@ def main(argv=None):
     up.add_argument("--ref", help="branch or tag to install (default from config)")
     up.add_argument("--auto", action="store_true", help="scheduled run: install only a newer release, verify, roll back if needed")
     up.add_argument("--jitter", type=int, default=0, help=argparse.SUPPRESS)
+    w = sub.add_parser("weather", help="add, change or remove a camera's local weather station (beta)")
+    w.add_argument("camera", nargs="?")
     sub.add_parser("version", help="print the version")
 
     # allow --config after the subcommand too
@@ -108,6 +110,10 @@ def main(argv=None):
     elif args.cmd == "restart":
         from .service import restart
         restart()
+
+    elif args.cmd == "weather":
+        from .configure import weather_station
+        weather_station(cfg_path, args.camera)
 
     elif args.cmd == "update":
         from .update import run

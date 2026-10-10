@@ -1,5 +1,6 @@
 """The agent. Each camera gets a CameraAgent (its own uplink, broker login, and PTZ); the Supervisor runs
 them side by side, so one camera's problems never stop the others."""
+import collections
 import json
 import os
 import logging
@@ -50,6 +51,14 @@ class CameraAgent:
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
         self.ptz_position = None       # last reported PTZ position (pan/tilt/zoom), for the map direction
+        wcfg = cfg.get("weather") or {}
+        self.weather = None
+        if wcfg.get("kind"):
+            from .weather import Reader
+            self.weather = Reader(wcfg)
+            self.weather_name = wcfg.get("name") or f"{cfg['platform'].get('camera_id', '')} weather"
+        self.weather_pending = collections.deque(maxlen=120)
+        self.weather_last = 0.0   # readings not yet delivered (kept through short outages)
 
         p = cfg["platform"]
         self.mq = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=self.cam_id)
@@ -147,6 +156,9 @@ class CameraAgent:
                     "position": self.ptz_position},
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
+            **({"weather": {"station": {"kind": self.weather.kind, "uid": self.weather.uid, "name": self.weather_name},
+                            "readings": list(self.weather_pending)}}
+               if self.weather and self.weather_pending and self.weather.uid else {}),
         }
 
     def track_position(self, stop):
@@ -164,10 +176,36 @@ class CameraAgent:
             stop.wait(2 if busy else 60)
 
     def _publish_telemetry(self):
+        """True if it went out (pending weather readings are then cleared)."""
         try:
-            self.mq.publish(self.topics["telemetry"], json.dumps(self._info()), qos=0)
+            sent = len(self.weather_pending)
+            info = self.mq.publish(self.topics["telemetry"], json.dumps(self._info()), qos=1)
+            if self.mqtt_connected and info.rc == 0:
+                for _ in range(sent):                    # only those included; newer ones wait for next time
+                    if self.weather_pending:
+                        self.weather_pending.popleft()
+                return True
         except Exception as e:
             self.log.debug("telemetry publish failed: %s", e)
+        return False
+
+    def track_weather(self, stop):
+        """Read the local weather station and send each reading with the telemetry."""
+        w = self.weather
+        while not stop.is_set():
+            try:
+                w.station_id()
+                r = w.read()
+                if r:
+                    self.weather_last = time.time()
+                    self.weather_pending.append({k: v for k, v in r.items() if v is not None})
+                    self._publish_telemetry()
+                    if w.kind != "tempest":          # Tempest paces itself (one observation a minute)
+                        stop.wait(w.interval)
+            except Exception as e:  # noqa: BLE001
+                self.log.warning("weather station not readable: %s; retrying in 60s", e)
+                stop.wait(60)
+        w.close()
 
     def status(self):
         """For `camagent list`: a short snapshot of this camera."""
@@ -182,6 +220,10 @@ class CameraAgent:
             "ptz": None if not self.ptz else ("connected" if self.ptz.connected else
                                               "unavailable" if not self.ptz.available else "connecting"),
             "declined": self.server.get("declined", ""),
+            "weather": None if not self.weather else {
+                "kind": self.weather.kind, "station": self.weather.uid,
+                "age_s": int(time.time() - self.weather_last) if self.weather_last else None,
+                "waiting": len(self.weather_pending)},
         }
 
     # ---------- lifecycle ----------
@@ -189,6 +231,9 @@ class CameraAgent:
         self.log.info("starting")
         if self.uplink:
             self.uplink.start()
+        if self.weather:
+            threading.Thread(target=self.track_weather, args=(self.stopping,), daemon=True,
+                             name=f"weather-{self.cam_id}").start()
         if self.ptz:
             self.ptz.start()
             threading.Thread(target=self.track_position, args=(self.stopping,), daemon=True,
