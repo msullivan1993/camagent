@@ -46,6 +46,8 @@ def main(argv=None):
     pr = sub.add_parser("probe", help="show what a camera supports over ONVIF (focus, day/night, wiper...)")
     pr.add_argument("camera", nargs="?")
     pr.add_argument("--test-moves", action="store_true", help="also check that absolute moves work (turns the camera)")
+    fx = sub.add_parser("fix-stream", help="set the camera's stream to H.264, up to 1080p, 2 s keyframes (asks first)")
+    fx.add_argument("camera", nargs="?")
     sub.add_parser("version", help="print the version")
 
     # allow --config after the subcommand too
@@ -113,6 +115,10 @@ def main(argv=None):
     elif args.cmd == "restart":
         from .service import restart
         restart()
+
+    elif args.cmd == "fix-stream":
+        from .controls import cli_fix_stream
+        cli_fix_stream(cfg_path, args.camera)
 
     elif args.cmd == "probe":
         from .controls import cli_probe

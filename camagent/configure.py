@@ -43,6 +43,25 @@ def choose(items, label, allow_none_text=None):
         print("  Not a valid choice.")
 
 
+def _fix_stream(cam, max_height=1080):
+    """Change the camera's main stream over ONVIF (H.264, size limit, 2 s keyframes). Reports what happened."""
+    from .controls import Controls, NotAllowed, OnvifSession
+    try:
+        s = OnvifSession(cam)
+        s._connect()
+        changes = Controls(s).stream_fixes(apply=True, max_height=max_height)
+    except NotAllowed as e:
+        print(f"  {e}.")
+        print("  Change it in the camera's own web page instead, then check again.")
+        return False
+    except Exception as e:  # noqa: BLE001
+        print(f"  Couldn't change it over ONVIF ({e}). Change it in the camera's own web page instead.")
+        return False
+    print("  Changed: " + ("; ".join(changes) if changes else "nothing needed changing") + ". Waiting for the camera...")
+    time.sleep(8)
+    return True
+
+
 def heading(text):
     print(f"\n=== {text} ===")
 
@@ -189,7 +208,11 @@ def step_check_stream(cfg, ffprobe):
             print("  any 'smart codec' or H.264+ option), or pick another stream such as the camera's sub-stream.")
             recheck, other = "I've changed the camera to H.264: check again", "Pick a different stream"
             keep = "Keep it anyway (viewers won't see video until it's H.264)"
-            pick = choose([recheck, other, keep], str)
+            auto = "Let camagent change it (needs the camera's admin login)"
+            pick = choose([recheck, other, keep, auto], str)
+            if pick == auto:
+                _fix_stream(cam)
+                continue
             if pick == recheck:
                 continue
             if pick == other:
@@ -353,7 +376,11 @@ def _finish(cam, main_path, others):
                       f"{limit}p or lower, or pick its sub-stream.")
                 other, recheck = "Pick a different stream", "I've changed the camera: check again"
                 keep = "Save anyway (it will be declined until it's fixed)"
-                pick = choose([other, recheck, keep], str)
+                auto = "Let camagent change it (needs the camera's admin login)"
+                pick = choose([other, recheck, keep, auto], str)
+                if pick == auto:
+                    _fix_stream(cam, max_height=limit)
+                    pick = recheck
                 if pick == other:
                     _rewalk_stream(cam)
                     continue

@@ -80,6 +80,11 @@ sleep (offering to turn that off, since a sleeping computer takes the camera off
 and the camera's Control page shows just those. `camagent probe <camera>` prints the same list, without moving
 or switching anything. Lights switch themselves off and forced day/night returns to automatic after a while.
 
+**Fixing the camera's stream:** `camagent fix-stream <camera>` shows what would bring the camera to H.264,
+1080p or less, and 2-second keyframes, and changes it after asking (setup offers the same). Most cameras need an
+administrator login for this. camagent also listens for the camera's own alarms (covered, moved, out of focus)
+and reports them to the host.
+
 **Weather station (beta):** camagent can read a Tempest, Davis WeatherLink Live or Ecowitt gateway on the
 same network and show its conditions on the camera's page. Menu: *Weather station (beta)*, or
 `camagent weather <camera>`.

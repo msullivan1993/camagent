@@ -29,6 +29,7 @@ class PTZ:
         self._connecting = threading.Lock()
         self.last_activity = 0.0       # time of the last move or preset, so position is checked often then
         self.moves = 0                 # move/preset commands sent (to tell real position reports from fake ones)
+        self.commanded = None          # last absolute position camagent sent (stands in for fake position reports)
         self.onvif = self.source = None
 
     # ---------- connection ----------
@@ -129,6 +130,7 @@ class PTZ:
         self.last_activity = time.time()
         if pan or tilt or zoom:
             self.moves += 1
+            self.commanded = None      # steered by hand: where it points is unknown again
         with self._lock:
             self._gen += 1
             if self._timer:
@@ -155,6 +157,7 @@ class PTZ:
         self._require()
         self.last_activity = time.time()
         self.moves += 1
+        self.commanded = None
         try:
             self.ptz.GotoPreset({"ProfileToken": self.token, "PresetToken": str(preset)})
         except Exception as e:

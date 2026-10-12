@@ -34,6 +34,9 @@ def missing_settings(cfg):
     return missing
 
 
+CONTROL_OPS = {"focus", "autofocus", "daynight", "aux", "home", "reboot", "sync_clock", "point", "probe"}
+
+
 class CameraAgent:
     def __init__(self, cfg: dict):
         missing = missing_settings(cfg)
@@ -52,11 +55,16 @@ class CameraAgent:
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
         self.ptz_position = None       # last reported PTZ position (pan/tilt/zoom), for the map direction
         self.position_kind = "unknown" # "real" once the reported position changes with movement; "fake" if it never does
-        self.controls = None
-        if self.ptz:
-            from .controls import Controls
+        self.controls = self.session = None
+        self.events_pending = collections.deque(maxlen=50)     # camera alarms not yet delivered
+        self._sent_cmd = None
+        cam = cfg["camera"]
+        if self.ptz or (cam.get("host") and cam.get("username")):
+            from .controls import Controls, OnvifSession
+            if not self.ptz:                                    # fixed camera: ONVIF just for its controls
+                self.session = OnvifSession(cfg)
             a = cfg.get("agent") or {}
-            self.controls = Controls(self.ptz, light_minutes=int(a.get("light_minutes", 15)),
+            self.controls = Controls(self.ptz or self.session, light_minutes=int(a.get("light_minutes", 15)),
                                      daynight_minutes=int(a.get("daynight_minutes", 30)))
         wcfg = cfg.get("weather") or {}
         self.weather = None
@@ -136,6 +144,8 @@ class CameraAgent:
         op = cmd.get("op")
         if op == "info":
             return self._info()
+        if op in CONTROL_OPS:
+            return self._control(op, cmd)
         if not self.ptz:
             raise RuntimeError("PTZ is disabled for this camera")
         if op == "move":
@@ -150,7 +160,12 @@ class CameraAgent:
             return {"token": self.ptz.record_preset(cmd.get("name", "Preset"), cmd.get("id") or None)}
         if op == "preset_delete":
             return self.ptz.delete_preset(cmd["id"])
+        raise ValueError(f"unknown op: {op}")
+
+    def _control(self, op, cmd):
         c = self.controls
+        if not c:
+            raise RuntimeError("this camera has no ONVIF controls set up")
         if op == "focus":
             return c.focus(cmd.get("dir", "stop"), cmd.get("ms", 600))
         if op == "autofocus":
@@ -163,11 +178,41 @@ class CameraAgent:
             return c.home()
         if op == "reboot":
             return c.reboot()
+        if op == "sync_clock":
+            r = c.sync_clock()
+            c.probe()
+            self._publish_telemetry()
+            return r
+        if op == "point":
+            return c.point(cmd.get("pan", 0), cmd.get("tilt"), cmd.get("zoom"))
         if op == "probe":
             caps = c.probe()
             self._publish_telemetry()
             return {"ok": True, "caps": caps}
         raise ValueError(f"unknown op: {op}")
+
+    def watch_camera(self, stop):
+        """Once the camera answers over ONVIF: find out what it supports (again every 6 hours), and listen for
+        its own alarms (covered, moved, out of focus) for as long as the agent runs."""
+        target = self.ptz or self.session
+        while not stop.is_set() and not target.connected:
+            stop.wait(5)
+        if stop.is_set():
+            return
+        threading.Thread(target=self.controls.watch_events, args=(stop, self._on_camera_event), daemon=True,
+                         name=f"events-{self.cam_id}").start()
+        while not stop.is_set():
+            try:
+                self.controls.probe()
+                self._publish_telemetry()
+            except Exception as e:  # noqa: BLE001
+                self.log.info("camera probe failed: %s", e)
+            stop.wait(6 * 3600)
+
+    def _on_camera_event(self, event):
+        self.log.warning("camera alarm: %s", event.get("topic"))
+        self.events_pending.append(event)
+        self._publish_telemetry()
 
     # ---------- status ----------
     def _info(self):
@@ -180,6 +225,7 @@ class CameraAgent:
                     "position": self.ptz_position},
             "caps": dict(self.controls.caps, position=self.position_kind) if self.controls and self.controls.caps
                     else None,
+            **({"events": list(self.events_pending)} if self.events_pending else {}),
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
             **({"weather": {"station": {"kind": self.weather.kind, "uid": self.weather.uid, "name": self.weather_name},
@@ -190,17 +236,19 @@ class CameraAgent:
     def track_position(self, stop):
         """Report where the PTZ camera points: every 2 s while it's being moved (and for 20 s after), every
         60 s when idle. Telemetry goes out only when the position actually changes, so the map cone follows."""
-        baseline, moves_then, probed_at = None, 0, 0.0
+        baseline, moves_then = None, 0
         while not stop.is_set():
             busy = self.ptz and time.time() - self.ptz.last_activity < 20
-            if self.controls and self.ptz.connected and time.time() - probed_at > 6 * 3600:
-                probed_at = time.time()                       # what the camera supports (again every 6 hours)
-                try:
-                    self.controls.probe()
-                    self._publish_telemetry()
-                except Exception as e:  # noqa: BLE001
-                    self.log.info("camera probe failed: %s", e)
             pos = self.ptz.position() if self.ptz else None
+            commanded = getattr(self.ptz, "commanded", None) if self.ptz else None
+            commanded = commanded if isinstance(commanded, dict) else None
+            if self.position_kind == "fake" and commanded:
+                if commanded is not self._sent_cmd:
+                    self._sent_cmd = commanded
+                    self.ptz_position = dict(commanded, commanded=True)
+                    self._publish_telemetry()
+                stop.wait(2 if busy else 60)
+                continue
             if pos is not None:
                 # Real or placeholder? Some cameras answer the position request with a fixed value.
                 if baseline is None:
@@ -225,12 +273,15 @@ class CameraAgent:
     def _publish_telemetry(self):
         """True if it went out (pending weather readings are then cleared)."""
         try:
-            sent = len(self.weather_pending)
+            sent, sent_events = len(self.weather_pending), len(self.events_pending)
             info = self.mq.publish(self.topics["telemetry"], json.dumps(self._info()), qos=1)
             if self.mqtt_connected and info.rc == 0:
                 for _ in range(sent):                    # only those included; newer ones wait for next time
                     if self.weather_pending:
                         self.weather_pending.popleft()
+                for _ in range(sent_events):
+                    if self.events_pending:
+                        self.events_pending.popleft()
                 return True
         except Exception as e:
             self.log.debug("telemetry publish failed: %s", e)
@@ -282,6 +333,11 @@ class CameraAgent:
         if self.weather:
             threading.Thread(target=self.track_weather, args=(self.stopping,), daemon=True,
                              name=f"weather-{self.cam_id}").start()
+        if self.session:
+            self.session.start()
+        if self.controls:
+            threading.Thread(target=self.watch_camera, args=(self.stopping,), daemon=True,
+                             name=f"camera-{self.cam_id}").start()
         if self.ptz:
             self.ptz.start()
             threading.Thread(target=self.track_position, args=(self.stopping,), daemon=True,
@@ -294,6 +350,8 @@ class CameraAgent:
         self.stopping.set()
         if self.controls:
             self.controls.shutdown()
+        if self.session:
+            self.session.shutdown()
         if self.ptz:
             self.ptz.shutdown()
         if self.uplink:
