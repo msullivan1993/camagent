@@ -87,3 +87,20 @@ import json  # noqa: E402
 assert a._publish_telemetry() and not a.events_pending
 assert json.loads(a.mq.publish.call_args.args[1])["events"][0]["kind"] == "tamper"
 print("v0.9 OK")
+
+# 7. `camagent probe` on a fixed camera uses plain ONVIF and reports its controls
+import io, contextlib  # noqa: E401,E402
+from camagent import controls as ctlmod  # noqa: E402
+fixed = {s: dict(cfg[s]) for s in cfg}
+cam2 = mock.Mock()
+cam2.create_media_service.return_value.GetProfiles.return_value = [NS(token="p0", VideoSourceConfiguration=NS(SourceToken="vs0"))]
+with mock.patch("camagent.config.load_all", return_value=(None, [fixed], None)), \
+     mock.patch("camagent.configure._pick", return_value=fixed), \
+     mock.patch("camagent.camera.onvif_connect", return_value=cam2), \
+     mock.patch.object(ctlmod.Controls, "probe", return_value={"focus": {"move": True}, "reboot": True}):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        ctlmod.cli_probe()
+text = out.getvalue()
+assert "Alarms:" in text and "Reboot:      yes" in text, text
+print("v0.9.1 probe OK")

@@ -436,17 +436,27 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     cam = _pick(cams, camera_id)
     if cam is None:
         return
-    p = PTZ(cam)
     print(f"Asking {cam['camera'].get('host')} what it supports...")
+    p = PTZ(cam) if cam["camera"].get("ptz", True) else None
     try:
-        p._connect()
+        if p:
+            p._connect()
+        if not p or not p.available or not getattr(p, "onvif", None):     # no PTZ: plain ONVIF for its controls
+            p = OnvifSession(cam)
+            p._connect()
     except Exception as e:  # noqa: BLE001
         raise SystemExit(f"Couldn't reach the camera over ONVIF: {e}")
-    caps = Controls(p).probe()
+    ctl = Controls(p)
+    caps = ctl.probe()
+    try:                                                     # alarms: does it publish an event feed at all?
+        p.onvif.create_events_service().GetEventProperties()
+        caps["events"] = True
+    except Exception:  # noqa: BLE001
+        caps["events"] = False
     print()
     for line in describe(caps):
         print("  " + line)
-    pos = p.position()
+    pos = p.position() if hasattr(p, "position") else None
     if pos:
         print(f"  Position:    reports pan {pos['pan']}, tilt {pos['tilt']}, zoom {pos['zoom']} "
               f"(whether it's real shows once the camera has been moved a few times)")
@@ -456,7 +466,7 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     elif moves:
         print("\n  This camera doesn't offer absolute moves, so there's nothing to test.")
     else:
-        print("\nNothing was moved or switched on. Wiper and lights can be tried from the camera's Control page.")
+        print("\nNothing was moved or switched on. Controls can be tried from the camera's Control page.")
         if (caps.get("ptz") or {}).get("absolute"):
             print("To check whether its absolute moves really work: camagent probe --test-moves")
 
