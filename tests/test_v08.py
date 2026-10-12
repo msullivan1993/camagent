@@ -100,3 +100,22 @@ for reports, expected in (([0.25] * 8, "fake"), ([0.25, 0.25, 0.4, 0.4, 0.4], "r
         a.track_position(stop)
     assert a.position_kind == expected, (reports, a.position_kind)
 print("v0.8 OK")
+
+# --- 0.8.1: the daylight-saving quirk in reported UTC, and the absolute-move test ---
+import datetime as _dt  # noqa: E402
+p, img, ptzsvc, dev = fake_ptz()
+now = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=1)          # firmware forgot the DST hour
+dev.GetSystemDateAndTime.return_value = NS(DaylightSavings=True, TimeZone=NS(TZ="EST5EDT,M3.2.0,M11.1.0"), UTCDateTime=NS(
+    Date=NS(Year=now.year, Month=now.month, Day=now.day), Time=NS(Hour=now.hour, Minute=now.minute, Second=now.second)))
+caps = Controls(p).probe()
+assert caps["clock_note"] == "dst" and "OK (the camera reports UTC without daylight saving" in "\n".join(describe(caps))
+from camagent import controls as _c  # noqa: E402
+answers = iter([True, True, True])
+with mock.patch("camagent.configure.yes", side_effect=lambda *a, **k: next(answers)), mock.patch.object(_c.time, "sleep"):
+    assert _c.test_moves(p) is True
+xs = [c.args[0]["Position"]["PanTilt"]["x"] for c in ptzsvc.AbsoluteMove.call_args_list]
+assert xs == [-0.5, 0.5] and ptzsvc.GotoHomePosition.called
+answers = iter([True, False, False])
+with mock.patch("camagent.configure.yes", side_effect=lambda *a, **k: next(answers)), mock.patch.object(_c.time, "sleep"):
+    assert _c.test_moves(p) is False                                        # it ignored the moves
+print("v0.8.1 OK")

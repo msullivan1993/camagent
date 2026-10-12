@@ -80,10 +80,18 @@ class Controls:
                               "firmware": getattr(info, "FirmwareVersion", "")}
             caps["reboot"] = True
             try:
-                u = dev.GetSystemDateAndTime().UTCDateTime
+                st = dev.GetSystemDateAndTime()
+                u = st.UTCDateTime
                 cam_t = datetime.datetime(u.Date.Year, u.Date.Month, u.Date.Day, u.Time.Hour, u.Time.Minute,
                                           u.Time.Second, tzinfo=datetime.timezone.utc)
-                caps["clock_drift_s"] = int((cam_t - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+                drift = int((cam_t - datetime.datetime.now(datetime.timezone.utc)).total_seconds())
+                caps["clock_drift_s"] = drift
+                # Some firmware works out "UTC" as local time minus the standard offset, forgetting daylight
+                # saving: the camera's clock is right, only its report is an hour off.
+                tz = str(getattr(getattr(st, "TimeZone", None), "TZ", "") or "")
+                dst = bool(getattr(st, "DaylightSavings", False)) or "DST" in tz.upper() or "," in tz
+                if abs(abs(drift) - 3600) < 120 and (dst or time.localtime().tm_isdst):
+                    caps["clock_note"] = "dst"
             except Exception:  # noqa: BLE001
                 pass
         except Exception as e:  # noqa: BLE001
@@ -198,7 +206,12 @@ def describe(caps):
         out.append(f"Camera:      {d.get('manufacturer', '?')} {d.get('model', '?')} (firmware {d.get('firmware', '?')})")
     if "clock_drift_s" in caps:
         drift = caps["clock_drift_s"]
-        out.append(f"Clock:       {'OK' if abs(drift) < 60 else 'off by'} {'' if abs(drift) < 60 else str(drift) + ' s'}".rstrip())
+        if caps.get("clock_note") == "dst":
+            out.append("Clock:       OK (the camera reports UTC without daylight saving; its own time is right)")
+        elif abs(drift) < 60:
+            out.append("Clock:       OK")
+        else:
+            out.append(f"Clock:       off by {drift} s (check the camera's time zone, daylight saving or NTP)")
     p = caps.get("ptz")
     if p:
         out.append(f"PTZ:         presets up to {p.get('presets') or '?'}, home position "
@@ -214,7 +227,28 @@ def describe(caps):
     return out
 
 
-def cli_probe(config_path=None, camera_id=None):
+def test_moves(p):
+    """Ask the camera to point to two absolute positions and let the person watching say whether it did.
+    Some cameras claim absolute moves but ignore them (or fake them, like their position reports)."""
+    from .configure import yes
+    if not yes("This will turn the camera left, then right, then back home. Watch the video. Continue?", default=False):
+        return None
+    results = []
+    for x, where in ((-0.5, "left"), (0.5, "right")):
+        p.ptz.AbsoluteMove({"ProfileToken": p.token, "Position": {"PanTilt": {"x": x, "y": 0.0}}})
+        time.sleep(6)
+        results.append(yes(f"Did the camera turn to the {where}?", default=False))
+    try:
+        p.ptz.GotoHomePosition({"ProfileToken": p.token})
+    except Exception:  # noqa: BLE001
+        pass
+    works = all(results)
+    print("\n  Absolute moves: " + ("WORK on this camera. YonderView can point it at a compass direction."
+                                   if works else "don't work on this camera (it ignores them)."))
+    return works
+
+
+def cli_probe(config_path=None, camera_id=None, moves=False):
     from . import config
     from .configure import _pick
     from .ptz import PTZ
@@ -236,4 +270,12 @@ def cli_probe(config_path=None, camera_id=None):
     if pos:
         print(f"  Position:    reports pan {pos['pan']}, tilt {pos['tilt']}, zoom {pos['zoom']} "
               f"(whether it's real shows once the camera has been moved a few times)")
-    print("\nNothing was moved or switched on. Wiper and lights can be tried from the camera's Control page.")
+    if moves and (caps.get("ptz") or {}).get("absolute"):
+        print()
+        test_moves(p)
+    elif moves:
+        print("\n  This camera doesn't offer absolute moves, so there's nothing to test.")
+    else:
+        print("\nNothing was moved or switched on. Wiper and lights can be tried from the camera's Control page.")
+        if (caps.get("ptz") or {}).get("absolute"):
+            print("To check whether its absolute moves really work: camagent probe --test-moves")
