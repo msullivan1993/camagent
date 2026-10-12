@@ -533,6 +533,8 @@ def list_cameras(config_path=None):
             parts = [video, "server connected" if st.get("mqtt") else "server NOT connected"]
             if st.get("ptz"):
                 parts.append(f"PTZ {st['ptz']}")
+            if st.get("position") in ("real", "fake"):
+                parts.append("PTZ position " + ("reported" if st["position"] == "real" else "not reported (fixed value)"))
             wx = st.get("weather")
             if wx:
                 parts.append(f"weather {wx['kind']}: " + (f"last reading {wx['age_s']}s ago" if wx.get("age_s") is not None

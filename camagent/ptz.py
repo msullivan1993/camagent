@@ -28,6 +28,8 @@ class PTZ:
         self._stop = threading.Event()
         self._connecting = threading.Lock()
         self.last_activity = 0.0       # time of the last move or preset, so position is checked often then
+        self.moves = 0                 # move/preset commands sent (to tell real position reports from fake ones)
+        self.onvif = self.source = None
 
     # ---------- connection ----------
     def start(self):
@@ -65,8 +67,11 @@ class PTZ:
             self.available = False
             self.log.warning("no ONVIF profile with PTZ found; PTZ disabled for this camera")
             return
+        vsc = getattr(chosen, "VideoSourceConfiguration", None)
         with self._lock:
             self.ptz, self.token, self.connected = ptz, chosen.token, True
+            self.onvif = cam                                      # for imaging (focus, day/night) and device calls
+            self.source = getattr(vsc, "SourceToken", None) if vsc else None
         self.log.info("PTZ ready on profile %s (%s)", getattr(chosen, "Name", ""), chosen.token)
 
     def _lost(self, err):
@@ -122,6 +127,8 @@ class PTZ:
         if v == (0.0, 0.0, 0.0):
             return self.stop()
         self.last_activity = time.time()
+        if pan or tilt or zoom:
+            self.moves += 1
         with self._lock:
             self._gen += 1
             if self._timer:
@@ -147,6 +154,7 @@ class PTZ:
     def goto_preset(self, preset):
         self._require()
         self.last_activity = time.time()
+        self.moves += 1
         try:
             self.ptz.GotoPreset({"ProfileToken": self.token, "PresetToken": str(preset)})
         except Exception as e:

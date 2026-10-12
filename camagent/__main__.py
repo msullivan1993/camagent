@@ -43,6 +43,8 @@ def main(argv=None):
     up.add_argument("--jitter", type=int, default=0, help=argparse.SUPPRESS)
     w = sub.add_parser("weather", help="add, change or remove a camera's local weather station (beta)")
     w.add_argument("camera", nargs="?")
+    pr = sub.add_parser("probe", help="show what a camera supports over ONVIF (focus, day/night, wiper...)")
+    pr.add_argument("camera", nargs="?")
     sub.add_parser("version", help="print the version")
 
     # allow --config after the subcommand too
@@ -110,6 +112,10 @@ def main(argv=None):
     elif args.cmd == "restart":
         from .service import restart
         restart()
+
+    elif args.cmd == "probe":
+        from .controls import cli_probe
+        cli_probe(cfg_path, args.camera)
 
     elif args.cmd == "weather":
         from .configure import weather_station

@@ -28,7 +28,7 @@ assert p.position() is None
 
 # 2. Telemetry goes out only when the position changes, and includes it
 a = CameraAgent(cfg)
-a.ptz = mock.Mock(last_activity=time.time())
+a.ptz = mock.Mock(last_activity=time.time(), moves=0, connected=False)
 positions = iter([{"pan": 0.1, "tilt": 0, "zoom": 0}, {"pan": 0.1, "tilt": 0, "zoom": 0}, {"pan": 0.3, "tilt": 0, "zoom": 0}])
 a.ptz.position.side_effect = lambda: next(positions, {"pan": 0.3, "tilt": 0, "zoom": 0})
 sent = []

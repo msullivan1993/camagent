@@ -51,6 +51,8 @@ DEFAULTS = {
         "interval_s": 30,
     },
     "agent": {
+        "light_minutes": 15,          # camera lights switched on by controllers turn off again after this
+        "daynight_minutes": 30,       # forced day or night goes back to automatic after this
         "max_move_ms": 2000,
         "telemetry_interval_s": 30,
         "stale_command_s": 5,

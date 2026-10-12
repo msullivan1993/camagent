@@ -40,6 +40,15 @@ camagent configure
 The installers set up Python, ffmpeg, and Git if needed, install camagent into its own
 environment, and never overwrite an existing config. Run them again to upgrade.
 
+While the repository is private, give the installer a read-only token:
+
+```bash
+sudo CAMAGENT_REPO=https://TOKEN@github.com/msullivan1993/camagent.git bash install.sh
+```
+```powershell
+$env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
+```
+
 ## The menu
 
 Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
@@ -66,6 +75,10 @@ offers to go back and fix it instead of saving settings that won't work.
 **Setup checks this computer first:** Python, ffmpeg (and offers to install it with winget or apt if
 it's missing), SRT support in that ffmpeg build, ffprobe, and on Windows whether the computer goes to
 sleep (offering to turn that off, since a sleeping computer takes the camera offline).
+
+**Camera controls:** camagent asks each camera what it supports (focus, day/night, wiper, lights, home, reboot)
+and the camera's Control page shows just those. `camagent probe <camera>` prints the same list, without moving
+or switching anything. Lights switch themselves off and forced day/night returns to automatic after a while.
 
 **Weather station (beta):** camagent can read a Tempest, Davis WeatherLink Live or Ecowitt gateway on the
 same network and show its conditions on the camera's page. Menu: *Weather station (beta)*, or
@@ -102,6 +115,9 @@ camagent doctor <camera>     # check one camera (or all of them, with no name)
 
 Upload bandwidth is the real limit: each camera needs roughly its own bitrate. Video is copied,
 not re-encoded, so CPU use stays low even on a Raspberry Pi.
+
+Upgrading from 0.1.x: the existing camera keeps working as is. The first time it's changed with
+`camagent configure`, it moves to the new layout (`cameras/<camera>.toml`) automatically.
 
 ## Commands
 

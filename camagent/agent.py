@@ -51,6 +51,13 @@ class CameraAgent:
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
         self.ptz_position = None       # last reported PTZ position (pan/tilt/zoom), for the map direction
+        self.position_kind = "unknown" # "real" once the reported position changes with movement; "fake" if it never does
+        self.controls = None
+        if self.ptz:
+            from .controls import Controls
+            a = cfg.get("agent") or {}
+            self.controls = Controls(self.ptz, light_minutes=int(a.get("light_minutes", 15)),
+                                     daynight_minutes=int(a.get("daynight_minutes", 30)))
         wcfg = cfg.get("weather") or {}
         self.weather = None
         if wcfg.get("kind"):
@@ -143,6 +150,23 @@ class CameraAgent:
             return {"token": self.ptz.record_preset(cmd.get("name", "Preset"), cmd.get("id") or None)}
         if op == "preset_delete":
             return self.ptz.delete_preset(cmd["id"])
+        c = self.controls
+        if op == "focus":
+            return c.focus(cmd.get("dir", "stop"), cmd.get("ms", 600))
+        if op == "autofocus":
+            return c.autofocus()
+        if op == "daynight":
+            return c.daynight(cmd.get("mode", "auto"), keep=bool(cmd.get("keep")))
+        if op == "aux":
+            return c.aux(str(cmd.get("command", "")), keep=bool(cmd.get("keep")))
+        if op == "home":
+            return c.home()
+        if op == "reboot":
+            return c.reboot()
+        if op == "probe":
+            caps = c.probe()
+            self._publish_telemetry()
+            return {"ok": True, "caps": caps}
         raise ValueError(f"unknown op: {op}")
 
     # ---------- status ----------
@@ -154,6 +178,8 @@ class CameraAgent:
                     "available": bool(self.ptz and self.ptz.available),
                     "connected": bool(self.ptz and self.ptz.connected),
                     "position": self.ptz_position},
+            "caps": dict(self.controls.caps, position=self.position_kind) if self.controls and self.controls.caps
+                    else None,
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
             **({"weather": {"station": {"kind": self.weather.kind, "uid": self.weather.uid, "name": self.weather_name},
@@ -164,10 +190,31 @@ class CameraAgent:
     def track_position(self, stop):
         """Report where the PTZ camera points: every 2 s while it's being moved (and for 20 s after), every
         60 s when idle. Telemetry goes out only when the position actually changes, so the map cone follows."""
+        baseline, moves_then, probed_at = None, 0, 0.0
         while not stop.is_set():
             busy = self.ptz and time.time() - self.ptz.last_activity < 20
+            if self.controls and self.ptz.connected and time.time() - probed_at > 6 * 3600:
+                probed_at = time.time()                       # what the camera supports (again every 6 hours)
+                try:
+                    self.controls.probe()
+                    self._publish_telemetry()
+                except Exception as e:  # noqa: BLE001
+                    self.log.info("camera probe failed: %s", e)
             pos = self.ptz.position() if self.ptz else None
             if pos is not None:
+                # Real or placeholder? Some cameras answer the position request with a fixed value.
+                if baseline is None:
+                    baseline, moves_then = pos, self.ptz.moves
+                elif self.position_kind != "real":
+                    changed = any(abs((pos.get(k) or 0) - (baseline.get(k) or 0)) > 0.01 for k in ("pan", "tilt", "zoom"))
+                    if changed:
+                        self.position_kind = "real"           # sent with the position update just below
+                    elif (self.ptz.moves - moves_then >= 3 and time.time() - self.ptz.last_activity > 3
+                          and self.position_kind != "fake"):
+                        self.position_kind = "fake"
+                        self.log.info("this camera reports a fixed position while moving: map direction will need "
+                                      "preset directions")
+                        self._publish_telemetry()
                 old = self.ptz_position or {}
                 moved = any(abs((pos.get(k) or 0) - (old.get(k) or 0)) > 0.002 for k in ("pan", "tilt", "zoom"))
                 if moved or not old:
@@ -220,6 +267,7 @@ class CameraAgent:
             "ptz": None if not self.ptz else ("connected" if self.ptz.connected else
                                               "unavailable" if not self.ptz.available else "connecting"),
             "declined": self.server.get("declined", ""),
+            "position": self.position_kind if self.ptz else None,
             "weather": None if not self.weather else {
                 "kind": self.weather.kind, "station": self.weather.uid,
                 "age_s": int(time.time() - self.weather_last) if self.weather_last else None,
@@ -244,6 +292,8 @@ class CameraAgent:
 
     def shutdown(self):
         self.stopping.set()
+        if self.controls:
+            self.controls.shutdown()
         if self.ptz:
             self.ptz.shutdown()
         if self.uplink:
