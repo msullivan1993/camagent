@@ -12,10 +12,14 @@ settings block parsing, SRT URL) · configure.py (interactive add/edit camera) �
 discovery/connect, ffprobe) · ptz.py · controls.py (ONVIF probe, focus/day-night/aux/reboot/clock/point,
 stream fixer, alarm events, OnvifSession for fixed cameras) · weather.py (Tempest, Davis, Ecowitt) · doctor.py ·
 update.py · service.py · uplink.py · prereqs.py. Installers in `scripts/` (install.ps1, install.sh).
-Note: there are stray old top-level .py files in the repo root (pending cleanup); the real code is `camagent/`.
+Work happens in Claude Code in WSL (`~/camagent`, venv `.venv`, installed with `pip install -e .`). Old Windows
+copies (`D:\Documents\camagent\`, `C:\yvprojects\camagent\`) are retired; their loose top-level files were
+copies from 0.1.x, not part of the repo.
 
 ## Tests
-`python tests/test_*.py` from the repo folder, one script each (simulated cameras with mocks). All must print OK.
+`for t in tests/test_*.py; do .venv/bin/python "$t"; done` from the repo folder: one script each (simulated
+cameras with mocks); all must print OK. CI (`.github/workflows/tests.yml`) runs them on every push with
+Python 3.11 and 3.14; `release.yml` runs them again before publishing a tag.
 
 ## Conventions
 - Never break the menu numbering existing users/tests rely on; add new options at the end.
