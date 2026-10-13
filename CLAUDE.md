@@ -12,9 +12,9 @@ settings block parsing, SRT URL) · configure.py (interactive add/edit camera) �
 discovery/connect, ffprobe) · ptz.py · controls.py (ONVIF probe, focus/day-night/aux/reboot/clock/point,
 stream fixer, alarm events, OnvifSession for fixed cameras) · weather.py (Tempest, Davis, Ecowitt) · doctor.py ·
 update.py · service.py · uplink.py · prereqs.py. Installers in `scripts/` (install.ps1, install.sh).
-Work happens in Claude Code in WSL (`~/camagent`, venv `.venv`, installed with `pip install -e .`). Old Windows
-copies (`D:\Documents\camagent\`, `C:\yvprojects\camagent\`) are retired; their loose top-level files were
-copies from 0.1.x, not part of the repo.
+Work happens in Claude Code in WSL (`~/camagent`, venv `.venv`, installed with `pip install -e .`). `C:\yvprojects\camagent` is a
+one-way backup mirror (refreshed every 15 min): never edit there. `D:\Documents\camagent` and
+`C:\yvprojects\camagent-old-2026-10-13` are pre-WSL copies.
 
 ## Tests
 `for t in tests/test_*.py; do .venv/bin/python "$t"; done` from the repo folder: one script each (simulated
