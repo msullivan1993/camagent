@@ -53,6 +53,10 @@ class CameraAgent:
         self.server = {"max_height": None, "declined": ""}
 
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
+        self.versions = None
+        if self.uplink and cfg["stream"].get("versions", "auto") != "off":
+            from .versions import Versions
+            self.versions = Versions(cfg, self.uplink)
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
         self.ptz_position = None       # last reported PTZ position (pan/tilt/zoom), for the map direction
         self.position_kind = "unknown" # "real" once the reported position changes with movement; "fake" if it never does
@@ -155,6 +159,12 @@ class CameraAgent:
             return self._info()
         if op in CONTROL_OPS:
             return self._control(op, cmd)
+        if op == "versions":                    # the website wants lower-quality versions made here (or not)
+            if not self.versions:
+                return {"ok": False, "error": "versions are off on this PC"}
+            if cmd.get("on"):
+                return self.versions.want(cmd.get("versions") or [], cmd.get("mark"), cmd.get("keep_s", 180))
+            return self.versions.stop()
         if not self.ptz:
             raise RuntimeError("PTZ is disabled for this camera")
         if op == "move":
@@ -237,6 +247,7 @@ class CameraAgent:
             **({"events": list(self.events_pending)} if self.events_pending else {}),
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
+            "versions": self.versions.capability() if self.versions else {"ok": False},
             **({"weather": {"station": {"kind": self.weather.kind, "uid": self.weather.uid, "name": self.weather_name},
                             "readings": list(self.weather_pending)}}
                if self.weather and self.weather_pending and self.weather.uid else {}),
@@ -360,6 +371,8 @@ class CameraAgent:
 
     def shutdown(self):
         self.stopping.set()
+        if self.versions:
+            self.versions.shutdown()
         if self.controls:
             self.controls.shutdown()
         if self.session:
