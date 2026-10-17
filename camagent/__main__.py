@@ -6,6 +6,8 @@
   camagent remove [CAM]       stop sending a camera from this machine
   camagent run                run the agent in the foreground (what the service runs)
   camagent discover           list ONVIF cameras on the network
+  camagent signin             sign this computer in to your YonderView account
+  camagent signout            forget this computer's YonderView sign-in
   camagent doctor [CAM]       check everything the agent needs, with fixes
   camagent install-service    install and start the system service
   camagent uninstall-service  remove the system service
@@ -32,6 +34,8 @@ def main(argv=None):
     p = sub.add_parser("remove", help="remove a camera from this machine")
     p.add_argument("camera", nargs="?")
     sub.add_parser("discover", help="list ONVIF cameras on the network")
+    sub.add_parser("signin", help="sign this computer in to your YonderView account (shows a code)")
+    sub.add_parser("signout", help="forget this computer's YonderView sign-in")
     p = sub.add_parser("doctor", help="check everything the agent needs")
     p.add_argument("camera", nargs="?")
     sub.add_parser("install-service", help="install and start the service")
@@ -86,6 +90,20 @@ def main(argv=None):
                 configure.remove(cfg_path, args.camera)
         except (KeyboardInterrupt, EOFError):
             print("\nCancelled; nothing saved.")
+
+    elif args.cmd in ("signin", "signout"):
+        from . import configure, link
+        try:
+            if args.cmd == "signout":
+                configure.sign_out(cfg_path)
+            else:
+                site, token, name = configure.account_token(cfg_path)
+                if token:
+                    print(f"Signed in as {name or 'your account'}. Set a camera up with: camagent add")
+        except link.LinkError as e:
+            raise SystemExit(str(e))
+        except (KeyboardInterrupt, EOFError):
+            print("\nCancelled.")
 
     elif args.cmd == "list":
         from .configure import list_cameras

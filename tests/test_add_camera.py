@@ -12,7 +12,7 @@ block = ["CAMERA=newcam_0003",
 answers = iter(["n", "10.0.0.5", "", "admin",          # find camera: no search, host, port, user
                 "2",                                    # ONVIF failed: continue without it
                 "rtsp://10.0.0.5:554/stream1", "n",     # stream URL, no PTZ
-                *block, "",                             # settings block, MQTT port default
+                "2", *block, "",                             # settings block, MQTT port default
                 "n"])                                   # don't install service
 patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch("getpass.getpass", lambda *a: "campw"),
@@ -51,8 +51,8 @@ answers = iter(["n", "10.0.0.6", "", "admin",          # first try: web login
                 "", "", "", "onvif",                    # search? (no), keep host, keep port, ONVIF user
                 "1", "y",                               # pick profile 1, enable PTZ
                 "1", "rtsp://10.0.0.6/main2",           # stream unreadable -> enter a different URL
-                *block, "",                             # settings block, MQTT port
-                "1", *block, "",                        # login failed -> paste again
+                "2", *block, "",                             # settings block, MQTT port
+                "1", "2", *block, "",                        # login failed -> paste again
                 "n"])
 patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch("getpass.getpass", lambda *a: ""),
@@ -96,7 +96,7 @@ answers = iter(["n", "10.0.0.7", "", "onvif",
                 "2",                       # H.265 -> pick a different stream
                 "2",                       # pick main again (camera now switched to H.264)...
                 "1",                       # ...still H.265 -> "I've changed it, check again" -> now H.264
-                *block, "", "n"])
+                "2", *block, "", "n"])
 patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch("getpass.getpass", lambda *a: ""),
            mock.patch.object(configure, "choose", spy_choose),

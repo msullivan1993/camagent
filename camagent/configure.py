@@ -236,24 +236,117 @@ def step_check_stream(cfg, ffprobe):
     return "ok"
 
 
-def step_platform(cfg):
+SIGN_IN = "Sign in to YonderView and pick the camera (easiest)"
+PASTE = "Paste the settings block from the camera's Connection page"
+
+
+def _use_block(cfg, block):
+    p, s = cfg["platform"], cfg["stream"]
+    parsed = config.parse_settings_block(block)
+    latency = parsed.pop("_srt_latency_ms", None)
+    p.update(parsed)
+    if latency:
+        s["srt_latency_ms"] = latency
+
+
+def account_token(main_path=None, sign_in_if_needed=True):
+    """(site, token, account name) for this computer's YonderView sign-in, signing in first if needed (and
+    remembering it in camagent.toml). (site, None, "") if the person stops."""
+    from . import link
+    main = config.load_or_defaults(main_path)
+    acct = main["account"]
+    site = acct.get("site") or link.DEFAULT_SITE
+    if acct.get("token"):
+        return site, acct["token"], acct.get("name", "")
+    if not sign_in_if_needed:
+        return site, None, ""
+    print("\nSigning in links this computer to your YonderView account, so camagent can fetch your")
+    print("cameras' connection settings. Your password is only ever typed on the website.")
+    token, name = link.sign_in(site)
+    acct.update(token=token, name=name)
+    config.save_main(main, main_path)
+    print(f"  Signed in as {name or 'your account'}. (Unlink this computer any time from your profile on the website.)")
+    return site, token, name
+
+
+def sign_out(main_path=None):
+    main = config.load_or_defaults(main_path)
+    if not main["account"].get("token"):
+        print("This computer isn't signed in.")
+        return
+    main["account"].update(token="", name="")
+    config.save_main(main, main_path)
+    print("Signed out on this computer. To stop its old sign-in working at all, unlink it from your profile")
+    print("on yonderview.net (camagent computers).")
+
+
+def _from_account(cfg, main_path=None):
+    """Sign in (if needed), pick one of the account's cameras, and fill in its connection settings.
+    True if done; False to fall back to pasting the settings block."""
+    from . import link
+    try:
+        site, token, _ = account_token(main_path)
+        if not token:
+            return False
+        try:
+            cams = link.cameras(site, token)
+        except link.NotSignedIn:
+            print("  This computer's sign-in was unlinked or expired. Signing in again.")
+            main = config.load_or_defaults(main_path)
+            main["account"].update(token="", name="")
+            config.save_main(main, main_path)
+            site, token, _ = account_token(main_path)
+            cams = link.cameras(site, token)
+    except link.LinkError as e:
+        print(f"  {e}")
+        return False
+    if not cams:
+        print("  There are no cameras on your account yet. Ask for one on yonderview.net (Host a camera);")
+        print("  once it's approved, come back here and sign in again.")
+        return False
+    print("Which camera is this?")
+    pick = choose(cams, lambda c: (f"{c['name']}" + (f" ({c['place']})" if c.get("place") else "")
+                                   + f"  [{c['slug']}]" + ("" if c.get("enabled", True) else "  (disabled)")),
+                  allow_none_text="None of these: paste a settings block instead")
+    if not pick:
+        return False
+    try:
+        state, block, info = link.connect(site, token, pick["slug"])
+        if state == "confirm":
+            print(f"\n  {block}")
+            print("  Only do this if this computer replaces the one sending it now (or that one is gone).")
+            if not yes("Make new connection settings for it?", default=False):
+                return False
+            state, block, info = link.connect(site, token, pick["slug"], replace=True)
+    except link.LinkError as e:
+        print(f"  {e}")
+        return False
+    _use_block(cfg, block)
+    if info.get("max_height"):
+        cfg["_server"] = {**(cfg.get("_server") or {}), "max_height": info["max_height"]}
+    print(f"  Got the connection settings for '{pick['name']}' ({pick['slug']}).")
+    return True
+
+
+def step_platform(cfg, main_path=None):
     p, s = cfg["platform"], cfg["stream"]
     heading("Server")
     guide.show(guide.SERVER)
-    print("Paste the settings block now, then press Enter")
-    print("on an empty line. Or just press Enter now to type the values one by one.")
+    typed = "Type the values one by one"
+    how = choose([SIGN_IN, PASTE, typed], str)
+    if how == SIGN_IN and _from_account(cfg, main_path):
+        p["mqtt_port"] = int(p["mqtt_port"])
+        return
     lines = []
-    while True:
-        line = input()
-        if not line.strip():
-            break
-        lines.append(line)
+    if how != typed:
+        print("Paste the settings block now, then press Enter on an empty line.")
+        while True:
+            line = input()
+            if not line.strip():
+                break
+            lines.append(line)
     if lines:
-        parsed = config.parse_settings_block("\n".join(lines))
-        latency = parsed.pop("_srt_latency_ms", None)
-        p.update(parsed)
-        if latency:
-            s["srt_latency_ms"] = latency
+        _use_block(cfg, "\n".join(lines))
         print(f"  Read settings for camera '{p['camera_id']}'.")
     else:
         p["camera_id"] = ask("Stream / camera ID", p["camera_id"])
@@ -335,7 +428,7 @@ def _tools(cfg):
     return prereqs.check_and_fix(yes, cfg["stream"].get("ffmpeg", ""))
 
 
-def _walk(cam, ffmpeg, ffprobe):
+def _walk(cam, ffmpeg, ffprobe, main_path=None):
     done = False
     while not done:                               # camera details -> stream; go back on failure
         step_find_camera(cam)
@@ -349,7 +442,7 @@ def _walk(cam, ffmpeg, ffprobe):
                 continue                          # pick another stream from the same camera
             done = True
             break
-    step_platform(cam)
+    step_platform(cam, main_path)
     if ffmpeg:
         cam["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too
     if not cam["platform"].get("camera_id"):
@@ -391,10 +484,10 @@ def _finish(cam, main_path, others):
                                               cam["camera"]["password"]))
                     continue
             break
-        again, anyway = "Paste the settings block again", "Save anyway (it won't connect until this is fixed)"
+        again, anyway = "Enter the server details again", "Save anyway (it won't connect until this is fixed)"
         pick = choose([again, anyway, "Cancel without saving"], str)
         if pick == again:
-            step_platform(cam)
+            step_platform(cam, main_path)
             continue
         if pick == anyway:
             break
@@ -474,7 +567,7 @@ def run(config_path=None, camera_id=None):
           "Press Enter to keep the value shown in [brackets].")
     original_id = cam["platform"]["camera_id"]
     ffmpeg, ffprobe = _tools(cam)
-    _walk(cam, ffmpeg, ffprobe)
+    _walk(cam, ffmpeg, ffprobe, main_path)
     others = [c for c in cams if c["platform"]["camera_id"] != original_id]
     _finish(cam, main_path, others)
 
@@ -500,7 +593,7 @@ def add(config_path=None):
         print(f"Adding camera #{n} on this machine. Press Enter to keep the value shown in [brackets].")
         print("You'll need this camera's IP address, its login, and its settings block from yonderview.net.")
     ffmpeg, ffprobe = _tools(cam)
-    _walk(cam, ffmpeg, ffprobe)
+    _walk(cam, ffmpeg, ffprobe, main_path)
     _finish(cam, main_path, cams)
 
 

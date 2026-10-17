@@ -57,6 +57,11 @@ DEFAULTS = {
         "telemetry_interval_s": 30,
         "stale_command_s": 5,
     },
+    "account": {
+        "site": "https://yonderview.net",   # where camagent signs in (device sign-in)
+        "token": "",             # this computer's sign-in token (yonderview.net/link); unlink it from your profile
+        "name": "",              # the account it's signed in to, for display
+    },
     "update": {
         "repo": DEFAULT_REPO,
         "ref": "",               # blank = the latest release
@@ -66,13 +71,14 @@ DEFAULTS = {
 }
 
 CAMERA_SECTIONS = ("camera", "stream", "platform", "weather")      # one file per camera, in cameras/
-MAIN_SECTIONS = ("agent", "update")                     # shared settings, in camagent.toml
+MAIN_SECTIONS = ("agent", "account", "update")          # shared settings, in camagent.toml
 
 SECTION_COMMENTS = {
     "camera": "The camera on the local network",
     "stream": "Video uplink to the server (ffmpeg -> SRT)",
     "platform": "Server connection details (the settings block from the camera's Connection page)",
     "agent": "Agent behavior",
+    "account": "YonderView sign-in (camagent menu: Sign in to YonderView). Keep this file private.",
     "update": "Where 'camagent update' installs from",
 }
 

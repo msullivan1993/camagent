@@ -52,8 +52,9 @@ $env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
 ## The menu
 
 Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
-everything: show cameras and status, add / change / remove a camera, check everything, show the
-recent log, restart or install the service, update, and find cameras on the network. On Windows it
+everything: show cameras and status, add a camera, check everything, and short groups for changing or
+removing a camera, the service and its log, updates, your YonderView sign-in, and more tools (finding
+cameras on the network, what a camera supports, fixing its stream). On Windows it
 asks for administrator rights itself. The commands below still work for scripts and remote use.
 
 ## Setup
@@ -64,7 +65,11 @@ asks for administrator rights itself. The commands below still work for scripts 
 2. **Picking the stream**: asks the camera for its streams over ONVIF and lists them with
    resolution and codec. If ONVIF isn't available, it tries common RTSP addresses for popular brands.
 3. **Checking the stream** with ffprobe, and offering to include audio if the camera sends it.
-4. **Server details**: paste the settings block from the camera's **Connection** page on yonderview.net.
+4. **Server details**: easiest, **sign in to YonderView**: camagent shows a short code, you enter it at
+   yonderview.net/link on your phone or another computer (signed in there, so your password never goes
+   through camagent), approve this computer, and pick the camera from your account. camagent fetches its
+   connection settings itself. Or paste the settings block from the camera's **Connection** page.
+   Linked computers are listed on your profile on yonderview.net, where you can unlink them.
 5. **Testing** the server login, saving the config, and installing the service.
 
 Run it again at any time to change settings; Enter keeps the current value.
@@ -111,7 +116,9 @@ PTZ connection, and runs independently: if one camera goes offline or has a bad 
 others keep streaming.
 
 ```
-camagent add                 # set up another camera (paste that camera's settings block)
+camagent add                 # set up another camera (sign in and pick it, or paste its settings block)
+camagent signin              # sign this computer in to your YonderView account
+camagent signout             # forget this computer's sign-in (unlink it on your profile to revoke it)
 camagent list                # every camera here, with live status
 camagent configure <camera>  # change one camera
 camagent remove <camera>     # stop sending a camera from this machine

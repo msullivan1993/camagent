@@ -51,7 +51,9 @@ measures = iter([{"height": 1440, "declared_fps": 25, "actual_fps": 25}, {"heigh
 def fake_mqtt(c):
     c["_server"] = {"max_height": 1080}
     return True, "ok"
-answers = iter(["n", "10.0.0.8", "", "admin", "2", "rtsp://10.0.0.8/main", "n", *block, "",
+answers = iter(["n", "10.0.0.8", "", "admin", "2",   # no search, address, port, user; ONVIF fails -> go on without
+                "n", "rtsp://10.0.0.8/main", "n",     # no address suggestions, the RTSP URL, no PTZ
+                "2", *block, "",                      # Server: paste the settings block, MQTT port default
                 "2",                      # over the limit -> "I've changed the camera: check again"
                 "n"])
 patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),

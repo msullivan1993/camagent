@@ -58,10 +58,11 @@ Leave the login out of the address; camagent adds it.
 """
 
 SERVER = """Step 3 of 4: YonderView
-On yonderview.net, open your camera's page and click Connection, then
-Generate credentials. Copy the whole settings block and paste it here.
-The block is shown only once. If you lose it, generate a new one (the old one
-stops working, which is fine).
+Easiest: sign in to YonderView. camagent shows a code; enter it at
+yonderview.net/link on your phone or another computer, then pick the camera.
+Or, on yonderview.net, open your camera's page, then Settings > Connection >
+Generate credentials, and paste the whole settings block here. (It's shown
+only once; if you lose it, generate a new one and the old one stops working.)
 """
 
 TEST = "Step 4 of 4: testing the connection to YonderView"
