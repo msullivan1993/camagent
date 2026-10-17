@@ -9,12 +9,27 @@ from pathlib import Path
 WINDOWS = os.name == "nt"
 
 
+def which(name):
+    """Like shutil.which, but never the current folder: on Windows shutil.which looks there first, and the
+    service's folder must not be a place where anyone can drop an "ffmpeg.exe" that then runs as SYSTEM."""
+    exts = [""] + (os.environ.get("PATHEXT", ".EXE").lower().split(";") if WINDOWS else [])
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or folder in (".", os.curdir) or not os.path.isabs(folder):
+            continue
+        for ext in exts:
+            p = os.path.join(folder, name + ext)
+            if os.path.isfile(p) and os.access(p, os.X_OK):
+                return p
+    return None
+
+
 def _windows_ffmpeg_candidates():
     """ffmpeg installed by winget isn't on PATH until a new window is opened (and never for the service),
-    so look where winget and common manual installs put it."""
-    roots = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", ""), "C:\\"]
-    pats = ["Microsoft/WinGet/Packages/Gyan.FFmpeg*/**/bin/ffmpeg.exe", "WinGet/Packages/Gyan.FFmpeg*/**/bin/ffmpeg.exe",
-            "ffmpeg/bin/ffmpeg.exe", "ffmpeg*/bin/ffmpeg.exe"]
+    so look where winget and common manual installs put it. Not in folders any user can create (like C:\\ffmpeg):
+    whatever is found there would run as SYSTEM."""
+    roots = [os.environ.get("ProgramFiles", ""), os.environ.get("LOCALAPPDATA", "")]
+    pats = ["WinGet/Packages/Gyan.FFmpeg*/**/bin/ffmpeg.exe", "Microsoft/WinGet/Packages/Gyan.FFmpeg*/**/bin/ffmpeg.exe",
+            "ffmpeg/bin/ffmpeg.exe"]
     for root in filter(None, roots):
         for pat in pats:
             for hit in sorted(Path(root).glob(pat), reverse=True):     # newest version folder first
@@ -24,7 +39,7 @@ def _windows_ffmpeg_candidates():
 def find_ffmpeg(configured=""):
     if configured and Path(configured).exists():
         return configured
-    found = shutil.which("ffmpeg")
+    found = which("ffmpeg")
     if found:
         return found
     if WINDOWS:
@@ -54,9 +69,10 @@ def install_ffmpeg():
     if WINDOWS:
         if not shutil.which("winget"):
             print("  winget isn't available. Download ffmpeg from https://www.gyan.dev/ffmpeg/builds/ "
-                  "(the 'essentials' build), unzip it to C:\\ffmpeg, and run setup again.")
+                  "(the 'essentials' build), unzip it to C:\\Program Files\\ffmpeg, and run setup again.")
             return False
-        cmd = ["winget", "install", "-e", "--id", "Gyan.FFmpeg",
+        # for all users: under Program Files, where only administrators can change it (the service runs it)
+        cmd = ["winget", "install", "-e", "--id", "Gyan.FFmpeg", "--scope", "machine",
                "--accept-source-agreements", "--accept-package-agreements"]
     elif shutil.which("apt-get"):
         cmd = ["apt-get", "install", "-y", "ffmpeg"]

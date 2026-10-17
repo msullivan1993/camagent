@@ -191,7 +191,7 @@ def step_check_stream(cfg, ffprobe):
         print("\nChecking the stream...")
         streams = camera.probe(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
         if not streams:
-            print(f"  Couldn't read {cam['rtsp_url'] or '(no RTSP URL)'}.")
+            print(f"  Couldn't read {config.redact(cam['rtsp_url']) if cam['rtsp_url'] else '(no RTSP URL)'}.")
             print("  Check the URL, and that the camera login is allowed to view RTSP.")
             other_url = "Enter a different RTSP URL"
             keep = "Keep it anyway (it won't stream until this is fixed)"

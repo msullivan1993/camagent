@@ -1,7 +1,6 @@
 """Finding cameras and their streams: ONVIF WS-Discovery, ONVIF profile lookup, RTSP probing."""
 import json
 import re
-import shutil
 import socket
 import subprocess
 import time
@@ -164,7 +163,8 @@ def find_ffprobe(ffmpeg: str = "") -> str:
         candidate = p.with_name(p.name.replace("ffmpeg", "ffprobe"))
         if candidate.exists():
             return str(candidate)
-    return shutil.which("ffprobe") or ""
+    from .prereqs import which
+    return which("ffprobe") or ""
 
 
 def probe(ffprobe: str, url: str, timeout: float = 8.0):

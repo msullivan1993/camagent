@@ -24,8 +24,26 @@ class NotSignedIn(LinkError):
     pass
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """The API never redirects; following one would carry the Authorization header to another address."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirects)
+
+
+def _check_site(site):
+    from urllib.parse import urlparse
+    u = urlparse(site)
+    local = u.hostname in ("localhost", "127.0.0.1", "::1")
+    if u.scheme != "https" and not (u.scheme == "http" and local):
+        raise LinkError(f"The YonderView address must start with https:// (it's {site!r}).")
+
+
 def _call(site, method, path, data=None, token=None, timeout=20):
     """(HTTP status, JSON body). Network trouble becomes a LinkError."""
+    _check_site(site)
     url = site.rstrip("/") + path
     body = json.dumps(data).encode() if data is not None else None
     req = urllib.request.Request(url, data=body, method=method)
@@ -36,7 +54,7 @@ def _call(site, method, path, data=None, token=None, timeout=20):
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
+        with _opener.open(req, timeout=timeout) as r:
             status, raw = r.status, r.read()
     except urllib.error.HTTPError as e:
         status, raw = e.code, e.read()

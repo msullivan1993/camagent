@@ -12,6 +12,7 @@ import time
 import paho.mqtt.client as mqtt
 
 from . import __version__
+from .config import scrub
 from .ptz import PTZ
 from .uplink import Uplink
 
@@ -80,6 +81,11 @@ class CameraAgent:
         self.mq.username_pw_set(self.cam_id, p["mqtt_password"])
         if p.get("mqtt_tls"):
             self.mq.tls_set(cert_reqs=ssl.CERT_REQUIRED)
+        self.mqtt_refused = ""
+        if not p.get("mqtt_tls") and p.get("mqtt_host", "") not in ("localhost", "127.0.0.1", "::1"):
+            # the camera's MQTT password would cross the internet unencrypted: don't connect at all
+            self.mqtt_refused = (f"not connecting to {p.get('mqtt_host')} without TLS (it would send the password "
+                                 "unencrypted); set mqtt_tls = true and port 8883 (camagent configure)")
         self.mq.will_set(self.topics["status"], "offline", qos=1, retain=True)
         self.mq.reconnect_delay_set(min_delay=1, max_delay=30)
         self.mq.on_connect = self._on_connect
@@ -119,7 +125,7 @@ class CameraAgent:
             c.publish(self.topics["ack"], json.dumps({"req": req, "ok": True, "result": result}), qos=1)
         except Exception as e:
             self.log.warning("command failed: %s", e)
-            c.publish(self.topics["ack"], json.dumps({"req": req, "ok": False, "error": str(e)}), qos=1)
+            c.publish(self.topics["ack"], json.dumps({"req": req, "ok": False, "error": scrub(str(e))}), qos=1)
 
     def _apply_config(self, payload):
         try:
@@ -131,9 +137,12 @@ class CameraAgent:
             self.ptz.settings.update({k: bool(new.get(k, False)) for k in ("invert_pan", "invert_tilt")})
             self.log.info("camera settings: %s", self.ptz.settings)
         self.server = {"max_height": new.get("max_height"), "declined": new.get("declined") or ""}
-        latency = new.get("latency_ms")
+        try:
+            latency = int(new.get("latency_ms") or 0)
+        except (TypeError, ValueError):
+            latency = 0
         if latency and self.uplink:
-            latency = max(120, min(8000, int(latency)))
+            latency = max(120, min(8000, latency))
             if latency != int(self.cfg["stream"].get("srt_latency_ms", 400)):
                 self.cfg["stream"]["srt_latency_ms"] = latency       # set on the camera's page on yonderview.net
                 self.uplink.restart_now(f"latency now {latency} ms")
@@ -343,6 +352,9 @@ class CameraAgent:
             threading.Thread(target=self.track_position, args=(self.stopping,), daemon=True,
                              name=f"ptzpos-{self.cam_id}").start()
         p = self.cfg["platform"]
+        if self.mqtt_refused:
+            self.log.error("MQTT: %s. Video still goes out; camera controls and status don't.", self.mqtt_refused)
+            return
         self.mq.connect_async(p["mqtt_host"], int(p["mqtt_port"]), keepalive=20)   # notice a dead link fast
         self.mq.loop_start()
 

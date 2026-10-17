@@ -42,8 +42,8 @@ DEFAULTS = {
         "srt_password": "",
         "srt_passphrase": "",
         "mqtt_host": "",
-        "mqtt_port": 1883,
-        "mqtt_tls": False,
+        "mqtt_port": 8883,
+        "mqtt_tls": True,
         "mqtt_password": "",
     },
     "weather": {
@@ -140,9 +140,21 @@ def dumps(cfg: dict, sections=None, title="camagent configuration") -> str:
     return "\n".join(lines)
 
 
+WINDOWS_ACL = ["/inheritance:r", "/grant:r", "*S-1-5-32-544:(OI)(CI)F", "*S-1-5-18:(OI)(CI)F"]   # Admins, SYSTEM
+
+
 def _secure_dir(d: Path):
-    """Config folders hold passwords: on Linux, readable only by root and the camagent service account."""
+    """Config folders hold passwords: on Linux, readable only by root and the camagent service account; on
+    Windows, only by Administrators and SYSTEM (also keeps others from dropping files where the service runs)."""
     d.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        root = d.parent if d.name == "cameras" else d
+        try:
+            import subprocess
+            subprocess.run(["icacls", str(root), *WINDOWS_ACL], capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return
     if os.name != "nt":
         try:
             import grp
@@ -156,17 +168,24 @@ def save(cfg: dict, path=None, sections=None, title="camagent configuration") ->
     path = Path(path or default_config_path())
     _secure_dir(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".camagent.")
-    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-        f.write(dumps(cfg, sections, title))
-    if os.name != "nt":
-        # readable only by root and the service account, since it holds passwords
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(dumps(cfg, sections, title))
+        if os.name != "nt":
+            # readable only by root and the service account, since it holds passwords
+            try:
+                import grp
+                os.chown(tmp, 0, grp.getgrnam("camagent").gr_gid)
+                os.chmod(tmp, 0o640)
+            except (KeyError, PermissionError):
+                os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
         try:
-            import grp
-            os.chown(tmp, 0, grp.getgrnam("camagent").gr_gid)
-            os.chmod(tmp, 0o640)
-        except (KeyError, PermissionError):
-            os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+            os.unlink(tmp)                        # it holds passwords too
+        except OSError:
+            pass
+        raise
     return path
 
 

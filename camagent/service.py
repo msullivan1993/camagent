@@ -10,6 +10,7 @@ from .config import base_dir, default_config_path
 SERVICE = "camagent"
 UNIT_PATH = Path("/etc/systemd/system/camagent.service")
 WINSW_URL = "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe"
+WINSW_SHA256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"   # it runs as SYSTEM: check it
 
 
 def is_admin() -> bool:
@@ -89,6 +90,15 @@ def _win_xml(config_path) -> str:
 """
 
 
+def _download_checked(url, sha256, dest):
+    import hashlib
+    with urllib.request.urlopen(url, timeout=60) as r:
+        data = r.read()
+    if hashlib.sha256(data).hexdigest() != sha256:
+        raise SystemExit(f"The download from {url} isn't the expected file (checksum differs); not installing it.")
+    Path(dest).write_bytes(data)
+
+
 # ---------- public ----------
 
 def install(config_path=None):
@@ -102,7 +112,7 @@ def install(config_path=None):
         exe.parent.mkdir(parents=True, exist_ok=True)
         if not exe.exists():
             print(f"Downloading WinSW service wrapper to {exe}")
-            urllib.request.urlretrieve(WINSW_URL, exe)
+            _download_checked(WINSW_URL, WINSW_SHA256, exe)
         xml.write_text(_win_xml(config_path), encoding="utf-8")
         if is_installed():
             _run([exe, "stop"], check=False)
