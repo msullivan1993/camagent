@@ -33,6 +33,7 @@ DEFAULTS = {
         "encoder": "x264",       # how to convert (chosen by setup's hardware check): qsv, vaapi, nvenc, amf, x264...
         "bitrate_kbps": 4500,    # the converted stream's bitrate
         "source_height": 0,      # the camera's own picture height, measured at setup
+        "versions": "auto",      # make lower-quality versions here when the website asks: "auto" (GPU), "cpu", "off"
         "ffmpeg": "",            # full path; blank = find on PATH
     },
     "platform": {
@@ -327,11 +328,12 @@ def scrub(text: str) -> str:
     return _SECRETS.sub(lambda m: (m.group(1) or m.group(2)) + "***", text)
 
 
-def srt_url(cfg: dict) -> str:
+def srt_url(cfg: dict, path: str = "") -> str:
+    """Where the camera's stream goes; path: a version's path instead (cam_720), same login and passphrase."""
     p, s = cfg["platform"], cfg["stream"]
     cid = p["camera_id"]
     params = [
-        f"streamid=publish:{cid}:{cid}:{p['srt_password']}",
+        f"streamid=publish:{path or cid}:{cid}:{p['srt_password']}",
         f"latency={int(s['srt_latency_ms']) * 1000}",
         "pkt_size=1316",
     ]

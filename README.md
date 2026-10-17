@@ -175,11 +175,29 @@ On Linux, after upgrading from 0.1.x, run `sudo camagent install-service` once s
 
 | Topic | Direction | Content |
 |---|---|---|
-| `cam/<id>/cmd` | server → agent | `{"op":"move","pan":0.5,"tilt":0,"zoom":0,"ms":800,"req":"1"}`, `stop`, `preset` (with `id`), `presets`, `preset_record` (`name`, optional `id` to overwrite), `preset_delete` (`id`), `info` |
+| `cam/<id>/cmd` | server → agent | `{"op":"move","pan":0.5,"tilt":0,"zoom":0,"ms":800,"req":"1"}`, `stop`, `preset` (with `id`), `presets`, `preset_record` (`name`, optional `id` to overwrite), `preset_delete` (`id`), `info`, `versions` (`on`, the ladder and mark, `keep_s`: see below) |
 | `cam/<id>/ack` | agent → server | `{"req":"1","ok":true,"result":...}` |
 | `cam/<id>/status` | agent → server | `online` / `offline` (retained) |
 | `cam/<id>/config` | server → agent | `{"invert_pan":false,"invert_tilt":false}` (retained) |
-| `cam/<id>/telemetry` | agent → server | version, uptime, uplink stats, PTZ state |
+| `cam/<id>/telemetry` | agent → server | version, uptime, uplink stats, PTZ state, `versions` (can this PC make lower qualities) |
 
 Commands may include `"ts"` (Unix time); the agent ignores commands older than
 `[agent] stale_command_s`.
+
+## Lower qualities made on this PC (0.13)
+
+The website can ask camagent to make a camera's 720p and 480p (plus 1080p for bigger cameras) on this PC while
+someone is watching them, instead of on YonderView's servers. It's off unless YonderView turns it on for the camera,
+and the extra upload happens only while those versions are watched. A second ffmpeg runs next to the main upload
+(the camera's own stream is never interrupted): one decode, each version resized, marked and encoded on the GPU,
+sent over SRT with the camera's own login. If this PC can't keep up (slower than real time for 30 s) or ffmpeg keeps
+failing, camagent stops and tells the website, and the server makes them again; it offers once more an hour later.
+The GPU check (a short test encode) runs only the first time the website asks.
+
+```
+[stream]
+versions = "auto"     # use this PC when YonderView asks and the PC has a working GPU (default)
+versions = "cpu"      # also without a GPU (x264): only for strong CPUs
+versions = "off"      # never
+```
+
