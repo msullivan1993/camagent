@@ -30,6 +30,7 @@ class Uplink(threading.Thread):
         self._fast_fails = 0                      # converting: ffmpeg exits soon after starting, in a row
         self._audio_off_until = 0.0               # camera announces audio but sends none: video only until then
         self._audio_now = False
+        self._run_lines = []
         self.stats = {
             "running": False, "fps": 0.0, "fps_camera": 0.0, "bitrate_kbps": 0.0, "speed": 0.0,
             "frames": 0, "restarts": 0, "started_at": None, "last_error": "",
@@ -68,6 +69,13 @@ class Uplink(threading.Thread):
         if any(w in text for w in ("connection refused", "connection timed out", "srt", "rtsp", "401", "404")):
             return False
         return any(w in text for w in self.ENCODER_TROUBLE)
+
+    def _audio_never_came(self):
+        """ffmpeg says the audio output never got a single frame ("[af#0:1 ...] No filtered frames for output
+        stream"), or, failing that, almost nothing went out at all."""
+        if any("No filtered frames for output stream" in ln and "af#" in ln for ln in self._run_lines):
+            return True
+        return self.stats.get("sent_bytes", 0) < self.NOTHING_SENT_BYTES
 
     # ---------- command ----------
     def command(self) -> list:
@@ -146,6 +154,7 @@ class Uplink(threading.Thread):
                 self.log.debug("ffmpeg: %s", line)
                 continue
             self._stderr.append(line)
+            self._run_lines.append(line)
             self.log.warning("ffmpeg: %s", line)
 
     # ---------- main loop ----------
@@ -179,8 +188,10 @@ class Uplink(threading.Thread):
                 self._halt.wait(30)
                 continue
 
+            self._run_lines = []                  # this run's ffmpeg messages
             threading.Thread(target=self._read_progress, args=(self.proc,), daemon=True).start()
-            threading.Thread(target=self._read_stderr, args=(self.proc,), daemon=True).start()
+            err_reader = threading.Thread(target=self._read_stderr, args=(self.proc,), daemon=True)
+            err_reader.start()
 
             # watchdog: ffmpeg can hang forever when a camera disappears
             planned = False
@@ -193,10 +204,10 @@ class Uplink(threading.Thread):
                 if time.time() - self._last_frame_at > stall:
                     self.log.warning("no new frames for %ss; restarting ffmpeg", stall)
                     self._kill()
-                    if self._audio_now and self.stats.get("sent_bytes", 0) < self.NOTHING_SENT_BYTES:
-                        # nothing went out: ffmpeg waits for every stream before writing anything (it counts the
-                        # video frames it queues meanwhile, so frames isn't 0), and the camera lists audio but
-                        # sends none (often after its settings changed). Send video only; try sound again later.
+                    err_reader.join(3)               # its last words, e.g. which stream never got anything
+                    if self._audio_now and self._audio_never_came():
+                        # The camera lists audio but sends none (often after its settings changed): the server
+                        # waits for data on every track, so the stream never starts. Send video only; retry later.
                         self._audio_off_until = time.time() + self.AUDIO_RETRY_S
                         self.log.warning("the camera lists audio but sends none; sending video only (trying "
                                          "audio again in %s minutes)", self.AUDIO_RETRY_S // 60)
