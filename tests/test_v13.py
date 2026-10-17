@@ -106,6 +106,9 @@ with mock.patch("camagent.versions.find_ffmpeg", lambda p: "/usr/bin/ffmpeg"), \
     assert not v.capability()["ok"] and not v.want(LADDER)["ok"]
     v.shutdown()
 assert not Versions(cfg(versions="off")).capability()["ok"]
+v = Versions(cfg(versions="cpu")); time.sleep(0.3)
+assert v.method == "x264" and v.capability()["ok"]               # no GPU, allowed on purpose
+v.shutdown()
 
 # 7. The agent: the website's "versions" command, and the capability in telemetry
 from camagent.agent import CameraAgent

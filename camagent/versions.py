@@ -9,7 +9,8 @@ It's a second ffmpeg next to the main upload, so starting or stopping versions n
 stream. It reads the camera once, decodes it on the GPU, and for each version resizes, adds the mark if asked and
 encodes on the GPU, then sends each one over SRT to that version's path (same login and passphrase as the
 camera). It stops when told, or by itself if the website hasn't said "still wanted" for keep_s seconds, and it
-gives up (so the server takes over) if ffmpeg keeps failing. Config: [stream] versions = "auto" or "off"."""
+gives up (so the server takes over) if ffmpeg keeps failing. Config: [stream] versions = "auto" (with a
+GPU), "cpu" (also without one: x264, for strong CPUs) or "off"."""
 import json
 import logging
 import os
@@ -128,10 +129,14 @@ class Versions:
         """A GPU method: the one setup chose for converting, else a quick hardware check (in the background)."""
         s = self.cfg["stream"]
         try:
-            if s.get("versions", "auto") == "off":
+            mode = s.get("versions", "auto")
+            if mode == "off":
                 return
             if s.get("encoder") in GPU_METHODS:
                 self.method = s["encoder"]
+                return
+            if mode == "cpu":                      # a strong CPU, no GPU: allowed on purpose
+                self.method = "x264"
                 return
             ffmpeg = find_ffmpeg(s.get("ffmpeg", ""))
             if not ffmpeg:

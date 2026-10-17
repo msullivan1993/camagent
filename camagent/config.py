@@ -33,7 +33,7 @@ DEFAULTS = {
         "encoder": "x264",       # how to convert (chosen by setup's hardware check): qsv, vaapi, nvenc, amf, x264...
         "bitrate_kbps": 4500,    # the converted stream's bitrate
         "source_height": 0,      # the camera's own picture height, measured at setup
-        "versions": "auto",      # make lower-quality versions here when the website asks (needs a GPU); "off": never
+        "versions": "auto",      # make lower-quality versions here when the website asks: "auto" (GPU), "cpu", "off"
         "ffmpeg": "",            # full path; blank = find on PATH
     },
     "platform": {
