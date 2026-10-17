@@ -28,4 +28,20 @@ assert len(cams) == 1                       # remove was declined
 assert config.load(main)["account"]["token"] == ""        # signed out from the account menu
 with mock.patch.object(menu.service, "is_admin", lambda: False):
     menu.run(main)                           # prints the sudo hint and returns
+
+# Updated while the menu was open (nightly auto-update, or another window): it reopens on the new version
+assert menu.disk_version() == menu.__version__
+reopened = []
+answers = iter(["4"])                                       # picks something; the update is noticed first
+with mock.patch.object(builtins, "input", lambda *a: next(answers)), \
+     mock.patch.object(menu.service, "is_admin", lambda: True), \
+     mock.patch.object(menu, "_service_state", lambda: "running"), \
+     mock.patch.object(menu, "disk_version", lambda: "99.0.0"), \
+     mock.patch.object(menu, "relaunch", lambda cp=None: (reopened.append(cp), (_ for _ in ()).throw(SystemExit(0)))), \
+     mock.patch.object(config, "status_path", lambda: d / "nostatus.json"):
+    try:
+        menu.run(main)
+    except SystemExit:
+        pass
+assert reopened == [main]
 print("MENU OK")

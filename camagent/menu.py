@@ -72,6 +72,28 @@ def installed_version():
         return __version__
 
 
+def disk_version():
+    """The version installed on disk right now. An update elsewhere (the nightly automatic one, or
+    'camagent update' in another window) replaces the files under a menu that's already open."""
+    import re
+    from pathlib import Path
+    try:
+        text = (Path(__file__).resolve().parent / "__init__.py").read_text(encoding="utf-8")
+        m = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+        return m.group(1) if m else __version__
+    except OSError:
+        return __version__
+
+
+def reopen_if_updated(config_path=None):
+    """If camagent was updated while this menu was open, reopen it on the new version (instead of running the
+    old code against new files)."""
+    new = disk_version()
+    if new != __version__:
+        print(f"\ncamagent was updated to {new} while this menu was open (it's running {__version__}).")
+        relaunch(config_path)
+
+
 def relaunch(config_path=None):
     """Start the menu again on the newly installed version, replacing this one."""
     import os
@@ -145,6 +167,7 @@ def run(config_path=None):
         return
     from . import configure, controls, doctor
     while True:
+        reopen_if_updated(config_path)
         try:
             _, cams, problems = config.load_all(config_path)
         except Exception as e:  # noqa: BLE001
@@ -192,6 +215,7 @@ def run(config_path=None):
         picked = _choose("", actions)
         if picked is None:
             return
+        reopen_if_updated(config_path)            # updated while sitting at the prompt: don't run the old code
         label, action = picked
         if isinstance(action, tuple):                     # a group: its own short menu
             if not _submenu(*action):
