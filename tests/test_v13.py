@@ -70,10 +70,13 @@ dying.chmod(dying.stat().st_mode | stat.S_IEXEC)
 with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(fake)), \
      mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None: [("qsv", 5.0)]):
     v = Versions(cfg(source_height=1080))
+    assert v.capability() == dict(v.capability(), ok=True, method="unchecked")   # no hardware check at startup
+    r = v.want(LADDER, MARK, keep_s=180)
+    assert not r["ok"] and r.get("checking")               # the first request starts the check; the server covers it
     for _ in range(50):
         if v.checked: break
         time.sleep(0.05)
-    assert v.capability()["ok"] and v.method == "qsv"
+    assert v.method == "qsv" and v.capability()["ok"]
     r = v.want(LADDER, MARK, keep_s=180)
     assert r["ok"] and v.running()
     v.want(LADDER, MARK, keep_s=180)                       # "still wanted": no restart
@@ -90,7 +93,7 @@ with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(dying)), \
      mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None: [("qsv", 5.0)]), \
      mock.patch.object(V, "FAST_S", 60):
     v = Versions(cfg(source_height=1080))
-    time.sleep(0.3)
+    v.want(LADDER, MARK); time.sleep(0.3)                    # first: the check
     v.want(LADDER, MARK)
     deadline = time.time() + 15
     while time.time() < deadline and not v.gave_up:
@@ -102,13 +105,30 @@ with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(dying)), \
 # 6. No GPU method: never offered; "off" in the config: not even checked
 with mock.patch("camagent.versions.find_ffmpeg", lambda p: "/usr/bin/ffmpeg"), \
      mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None: [("qsv", None)]):
-    v = Versions(cfg()); time.sleep(0.3)
-    assert not v.capability()["ok"] and not v.want(LADDER)["ok"]
+    v = Versions(cfg())
+    v.want(LADDER); time.sleep(0.3)                          # the check finds no GPU
+    assert v.checked and not v.capability()["ok"] and not v.want(LADDER)["ok"]
     v.shutdown()
 assert not Versions(cfg(versions="off")).capability()["ok"]
-v = Versions(cfg(versions="cpu")); time.sleep(0.3)
+v = Versions(cfg(versions="cpu"))
 assert v.method == "x264" and v.capability()["ok"]               # no GPU, allowed on purpose
 v.shutdown()
+
+# 6b. A PC that can't keep up (speed under 0.9x for a while) gives up, so the server takes over
+slow = d / "ffmpeg-slow"
+slow.write_text("#!/bin/sh\nwhile :; do echo speed=0.5x; sleep 0.2; done\n")
+slow.chmod(slow.stat().st_mode | stat.S_IEXEC)
+with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(slow)), \
+     mock.patch.object(V, "WARMUP_S", 0), mock.patch.object(V, "SLOW_FOR_S", 2):
+    v = Versions(cfg(source_height=1080, versions="cpu"))
+    assert v.want(LADDER, MARK)["ok"]
+    deadline = time.time() + 15
+    while time.time() < deadline and not v.gave_up:
+        time.sleep(0.2)
+    assert v.gave_up and not v.running() and "too slow" in v.error and not v.capability()["ok"]
+    v.gave_up -= V.RETRY_AFTER_S + 1                         # an hour later it offers again
+    assert v.capability()["ok"]
+    v.shutdown()
 
 # 7. The agent: the website's "versions" command, and the capability in telemetry
 from camagent.agent import CameraAgent

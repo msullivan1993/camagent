@@ -26,6 +26,10 @@ from .config import redact, rtsp_with_auth, scrub, srt_url
 GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf")
 MAX_FAST_FAILS = 3          # ffmpeg dying this many times within FAST_S of starting: give up (the server takes over)
 FAST_S = 20
+SLOW_SPEED = 0.9            # slower than this (x real time)...
+SLOW_FOR_S = 30             # ...for this long, after WARMUP_S: this PC can't keep up; give up, the server takes over
+WARMUP_S = 15
+RETRY_AFTER_S = 3600        # after giving up, offer again this much later
 
 
 def encoder(method):
@@ -112,7 +116,10 @@ class Versions:
         cid = cfg["platform"].get("camera_id", "")
         self.log = log or logging.getLogger(f"{cid}.versions")
         self.method = None
-        self.checked = False
+        self.checked = False           # the GPU check has run (only once the website first asks: see want())
+        self._checking = False
+        self.speed = None              # ffmpeg's latest speed (x real time)
+        self.slow_since = None
         self.proc = None
         self.wanted = None             # (versions, mark) as last asked
         self.keep_until = 0.0
@@ -121,23 +128,27 @@ class Versions:
         self.error = ""
         self._lock = threading.Lock()
         self._stop = threading.Event()
-        threading.Thread(target=self._find_method, daemon=True, name=f"versions-check-{cid}").start()
+        self._cid = cid
+        self._known_method()                       # from the config only: no hardware check at startup
         threading.Thread(target=self._watch, daemon=True, name=f"versions-{cid}").start()
 
     # ---------- can this PC do it? ----------
+    def _known_method(self):
+        """What the config already says: the GPU method setup chose for converting, or "cpu" on purpose."""
+        s = self.cfg["stream"]
+        mode = s.get("versions", "auto")
+        if mode == "off":
+            self.checked = True
+        elif s.get("encoder") in GPU_METHODS:
+            self.method, self.checked = s["encoder"], True
+        elif mode == "cpu":                        # a strong CPU, no GPU: allowed on purpose
+            self.method, self.checked = "x264", True
+
     def _find_method(self):
-        """A GPU method: the one setup chose for converting, else a quick hardware check (in the background)."""
+        """The GPU check (a short test encode), run once, in the background, the first time the website asks.
+        Hosts whose cameras never use host-made versions never run it."""
         s = self.cfg["stream"]
         try:
-            mode = s.get("versions", "auto")
-            if mode == "off":
-                return
-            if s.get("encoder") in GPU_METHODS:
-                self.method = s["encoder"]
-                return
-            if mode == "cpu":                      # a strong CPU, no GPU: allowed on purpose
-                self.method = "x264"
-                return
             ffmpeg = find_ffmpeg(s.get("ffmpeg", ""))
             if not ffmpeg:
                 return
@@ -148,14 +159,19 @@ class Versions:
         except Exception as e:  # noqa: BLE001  -- no GPU method: the server makes them
             self.log.debug("versions check failed: %s", e)
         finally:
-            self.checked = True
+            self.checked, self._checking = True, False
 
     def capability(self):
         """For telemetry: may the website ask this PC for versions?"""
-        if self.gave_up and time.time() - self.gave_up > 3600:
-            self.gave_up, self.fast_fails = False, 0
-        return {"ok": bool(self.method) and not self.gave_up and self.cfg["stream"].get("versions", "auto") != "off",
-                "method": self.method, "running": self.running(), "error": self.error or None}
+        self._maybe_retry()
+        may = bool(self.method) or not self.checked          # not checked yet: the website may ask (that checks)
+        return {"ok": may and not self.gave_up and self.cfg["stream"].get("versions", "auto") != "off",
+                "method": self.method or ("unchecked" if not self.checked else None), "running": self.running(),
+                "speed": self.speed, "error": self.error or None}
+
+    def _maybe_retry(self):
+        if self.gave_up and time.time() - self.gave_up > RETRY_AFTER_S:
+            self.gave_up, self.fast_fails, self.error = False, 0, ""
 
     def running(self):
         return bool(self.proc and self.proc.poll() is None)
@@ -163,8 +179,12 @@ class Versions:
     # ---------- what the website asks ----------
     def want(self, versions, mark=None, keep_s=180):
         """Start (or keep making) these versions. Returns a short status for the website."""
-        if self.gave_up and time.time() - self.gave_up > 3600:     # try again an hour later
-            self.gave_up, self.fast_fails = False, 0
+        self._maybe_retry()
+        if not self.checked and self.cfg["stream"].get("versions", "auto") != "off":
+            if not self._checking:                 # first request: check the GPU now; the server covers this one
+                self._checking = True
+                threading.Thread(target=self._find_method, daemon=True, name=f"versions-check-{self._cid}").start()
+            return {"ok": False, "checking": True, "error": "checking this PC's GPU; try again shortly"}
         if not self.method or self.gave_up:
             return {"ok": False, "error": self.error or "this PC can't make versions"}
         with self._lock:
@@ -222,10 +242,20 @@ class Versions:
                    outputs, files, mark, audio, s.get("wallclock_timestamps", True))
         self.log.info("making %s with %s -> %s", ", ".join(o["suffix"] + "p" for o in outputs),
                       convert.LABELS.get(self.method, self.method), redact(outputs[0]["url"]))
-        self.started = time.time()
-        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        cmd[1:1] = ["-progress", "pipe:1", "-nostats"]       # its speed, to notice a PC that can't keep up
+        self.started, self.speed, self.slow_since = time.time(), None, None
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir())
         threading.Thread(target=self._read_errors, args=(self.proc,), daemon=True).start()
+        threading.Thread(target=self._read_progress, args=(self.proc,), daemon=True).start()
+
+    def _read_progress(self, proc):
+        for line in proc.stdout:
+            if line.startswith("speed="):
+                try:
+                    self.speed = float(line.split("=", 1)[1].strip().rstrip("x"))
+                except ValueError:
+                    pass
 
     def _read_errors(self, proc):
         for line in proc.stderr:
@@ -253,6 +283,17 @@ class Versions:
                     self._kill()
                     self.log.info("versions stopped (the website stopped asking)")
                     continue
+                if self.running() and time.time() - self.started > WARMUP_S and self.speed is not None:
+                    if self.speed >= SLOW_SPEED:
+                        self.slow_since = None
+                    elif self.slow_since is None:
+                        self.slow_since = time.time()
+                    elif time.time() - self.slow_since > SLOW_FOR_S:
+                        self.error = f"this PC is too slow for these versions ({self.speed:.2f}x real time)"
+                        self.log.warning("%s; the server will make them (trying again in an hour)", self.error)
+                        self.gave_up, self.wanted = time.time(), None
+                        self._kill()
+                        continue
                 if self.proc and self.proc.poll() is not None:
                     quick = time.time() - getattr(self, "started", 0) < FAST_S
                     self.fast_fails = self.fast_fails + 1 if quick else 0
