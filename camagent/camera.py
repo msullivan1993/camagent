@@ -212,8 +212,9 @@ def sound_check(cfg):
 
 
 AUDIO_LOST = ("  Note: the camera stopped sending sound after this change (some camera firmware switches audio off\n"
-              "  when its video settings are changed over ONVIF). camagent sends video only until it's back; turn\n"
-              "  audio on again in the camera's own web page (often \"Video & Audio\" as the stream type).")
+              "  when its video settings are changed over ONVIF). camagent sends video only until it's back and adds\n"
+              "  the sound again by itself. Rebooting the camera usually fixes it; if not, turn audio on again in the\n"
+              "  camera's own web page (often \"Video & Audio\" as the stream type).")
 
 
 def describe(streams) -> str:

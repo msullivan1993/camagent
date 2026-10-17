@@ -40,7 +40,24 @@ with mock.patch("camagent.uplink.find_ffmpeg", lambda p: str(fake)):
     assert "0:a:0?" not in lines[1] and "-an" in lines[1]         # nothing went out: video only next
     assert up.stats["audio"] == "missing"
     assert up.stats["restarts"] == 0                              # a planned switch, not counted as a failure
-    # sound is tried again after AUDIO_RETRY_S
+    # while it's missing, a quiet check (beside the running video) looks for sound every AUDIO_CHECK_S
+    def checked(result):
+        up._restart.clear(); up._audio_checked_at = 0.0; up._audio_off_until = time.time() + 5
+        with mock.patch("camagent.camera.sound_check", lambda cfg: result):
+            up._check_audio_back()
+            t = time.time() + 5
+            while up._audio_checking and time.time() < t:
+                time.sleep(0.05)
+    checked(False)                                                # still silent: no restart, blind retry pushed back
+    assert not up._restart.is_set() and up._audio_off_until > time.time() + Uplink.AUDIO_RETRY_S - 5
+    assert "-an" in up.command()
+    with mock.patch("camagent.camera.sound_check", lambda cfg: 1 / 0):
+        up._check_audio_back()                                    # checked moments ago: not again yet
+    assert not up._audio_checking
+    checked(True)                                                 # sound is back: restart with audio
+    assert up._restart.is_set() and "0:a:0?" in up.command() and up.stats["audio"] == "on"
+    up._restart.clear()
+    # without ffprobe, sound is just tried again after AUDIO_RETRY_S
     up._audio_off_until = time.time() - 1
     assert "0:a:0?" in up.command() and up.stats["audio"] == "on"
     # audio off in settings: nothing reported
