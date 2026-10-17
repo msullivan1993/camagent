@@ -496,8 +496,16 @@ def cli_fix_stream(config_path=None, camera_id=None):
         print("  - " + ch)
     if not yes("Change them on the camera now?", default=True):
         return
+    from . import camera
+    had_sound = camera.sound_check(cam) if cam["stream"].get("audio") else None
     try:
         c.stream_fixes(apply=True)
     except NotAllowed as e:
         raise SystemExit(f"{e}. Or change these in the camera's own web page.")
     print("Done. The stream restarts with the new settings within a minute.")
+    if had_sound:
+        import time
+        print("Checking the camera still sends sound...")
+        time.sleep(10)
+        if camera.sound_check(cam) is False:
+            print(camera.AUDIO_LOST)

@@ -46,6 +46,7 @@ def choose(items, label, allow_none_text=None):
 def _fix_stream(cam, max_height=1080):
     """Change the camera's main stream over ONVIF (H.264, size limit, 2 s keyframes). Reports what happened."""
     from .controls import Controls, NotAllowed, OnvifSession
+    had_sound = camera.sound_check(cam) if cam["stream"].get("audio") else None
     try:
         s = OnvifSession(cam)
         s._connect()
@@ -59,6 +60,8 @@ def _fix_stream(cam, max_height=1080):
         return False
     print("  Changed: " + ("; ".join(changes) if changes else "nothing needed changing") + ". Waiting for the camera...")
     time.sleep(8)
+    if had_sound and changes and camera.sound_check(cam) is False:
+        print(camera.AUDIO_LOST)
     return True
 
 

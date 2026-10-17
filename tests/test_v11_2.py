@@ -40,4 +40,19 @@ with mock.patch("camagent.uplink.find_ffmpeg", lambda p: str(fake)):
     # audio off in settings: nothing reported
     c["stream"]["audio"] = False
     assert "audio" not in (Uplink(c).command() and Uplink(c).stats)
+
+# Changing the camera's stream over ONVIF: if sound stops afterwards (some firmware switches it off), say so
+import builtins
+from camagent import camera, configure
+out = []
+sounds = iter([True, False])                                    # before the change: sound; after: none
+fake_controls = mock.MagicMock()
+fake_controls.return_value.stream_fixes.return_value = ["resolution 3840x2160 -> 1920x1080"]
+with mock.patch.object(camera, "sound_check", lambda cfg: next(sounds)), \
+     mock.patch("camagent.controls.OnvifSession"), mock.patch("camagent.controls.Controls", fake_controls), \
+     mock.patch.object(configure.time, "sleep", lambda s: None), \
+     mock.patch.object(builtins, "print", lambda *a, **k: out.append(" ".join(map(str, a)))):
+    c["stream"]["audio"] = True
+    configure._fix_stream(c)
+assert any("stopped sending sound" in line for line in out), out
 print("v0.11.2 audio OK")

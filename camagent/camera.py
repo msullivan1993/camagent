@@ -201,6 +201,21 @@ def audio_arrives(ffprobe: str, url: str, seconds: int = 4):
     return any(line.strip() for line in r.stdout.splitlines())
 
 
+def sound_check(cfg):
+    """Does this camera send sound right now? None if it can't be checked (no ffprobe, no URL)."""
+    cam = cfg["camera"]
+    ffprobe = find_ffprobe(find_ffmpeg(cfg["stream"].get("ffmpeg", "")))
+    if not cam.get("rtsp_url") or not ffprobe:
+        return None
+    from .config import rtsp_with_auth
+    return audio_arrives(ffprobe, rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
+
+
+AUDIO_LOST = ("  Note: the camera stopped sending sound after this change (some camera firmware switches audio off\n"
+              "  when its video settings are changed over ONVIF). camagent sends video only until it's back; turn\n"
+              "  audio on again in the camera's own web page (often \"Video & Audio\" as the stream type).")
+
+
 def describe(streams) -> str:
     parts = []
     for s in streams or []:
