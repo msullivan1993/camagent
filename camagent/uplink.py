@@ -38,6 +38,7 @@ class Uplink(threading.Thread):
     # ---------- converting to 1080p (optional) ----------
     FAST_FAILS_TO_FALL_BACK = 3
     AUDIO_RETRY_S = 1800
+    NOTHING_SENT_BYTES = 32 * 1024            # less than this written out in a run: nothing really went out
 
     def convert_method(self):
         """None to send the camera's stream as it is; else how to convert it. A GPU method that keeps failing
@@ -121,6 +122,7 @@ class Uplink(threading.Thread):
                     self._last_frame_at = now
                 self.stats["frames"] = frames
                 size = int(block.get("total_size", "0") or 0) if block.get("total_size", "N/A") != "N/A" else 0
+                self.stats["sent_bytes"] = size
                 window.append((now, frames, size))
                 while window and now - window[0][0] > self.WINDOW_S:
                     window.popleft()
@@ -167,7 +169,7 @@ class Uplink(threading.Thread):
             self.log.info("starting ffmpeg -> %s", redact(srt_url(self.cfg)))
             started = time.time()
             self._last_frame_at = started
-            self.stats.update(running=True, frames=0, started_at=started)
+            self.stats.update(running=True, frames=0, sent_bytes=0, started_at=started)
             try:
                 self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                              stdin=subprocess.DEVNULL, text=True, bufsize=1)
@@ -191,8 +193,9 @@ class Uplink(threading.Thread):
                 if time.time() - self._last_frame_at > stall:
                     self.log.warning("no new frames for %ss; restarting ffmpeg", stall)
                     self._kill()
-                    if self._audio_now and self.stats.get("frames", 0) == 0:
-                        # nothing went out at all: ffmpeg waits for every stream, and the camera lists audio but
+                    if self._audio_now and self.stats.get("sent_bytes", 0) < self.NOTHING_SENT_BYTES:
+                        # nothing went out: ffmpeg waits for every stream before writing anything (it counts the
+                        # video frames it queues meanwhile, so frames isn't 0), and the camera lists audio but
                         # sends none (often after its settings changed). Send video only; try sound again later.
                         self._audio_off_until = time.time() + self.AUDIO_RETRY_S
                         self.log.warning("the camera lists audio but sends none; sending video only (trying "

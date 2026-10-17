@@ -12,7 +12,11 @@ d = Path(tempfile.mkdtemp())
 calls = d / "calls.txt"
 fake = d / "ffmpeg"
 # like the real ffmpeg waiting for audio packets that never come: runs, but never reports a frame
-fake.write_text(f"#!/bin/sh\necho \"$@\" >> {calls}\nexec sleep 30\n")
+# Like the real one: it counts the video frames it queues (frame= rises) but writes nothing (total_size=0),
+# then the queue is full and the counter stops.
+fake.write_text(f"#!/bin/sh\necho \"$@\" >> {calls}\n"
+                "for n in 15 30 45 60; do printf 'frame=%s\\ntotal_size=0\\nspeed=1.0x\\nprogress=continue\\n' $n; "
+                "sleep 0.2; done\nexec sleep 30\n")
 fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
 c = {s: dict(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS + config.MAIN_SECTIONS}

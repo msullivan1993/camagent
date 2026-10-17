@@ -2,7 +2,7 @@
 
 The small agent hosts run next to their IP camera (Windows PC or Raspberry Pi / Linux). It pulls the camera's
 RTSP stream and pushes it to YonderView over SRT, and keeps an MQTT connection for commands (PTZ, ONVIF
-controls) and telemetry (health, weather stations, camera alarms). Current version: **0.11.3**. Public repo:
+controls) and telemetry (health, weather stations, camera alarms). Current version: **0.11.4**. Public repo:
 github.com/msullivan1993/camagent. Releases are git tags (`v0.9.1`); agents update themselves nightly (~3 AM,
 with rollback).
 
