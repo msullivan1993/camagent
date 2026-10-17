@@ -53,6 +53,7 @@ def fake_mqtt(c):
     return True, "ok"
 answers = iter(["n", "10.0.0.8", "", "admin", "2",   # no search, address, port, user; ONVIF fails -> go on without
                 "n", "rtsp://10.0.0.8/main", "n",     # no address suggestions, the RTSP URL, no PTZ
+                "3",                                  # 1440p camera: send its own resolution (this test is the limit check)
                 "2", *block, "",                      # Server: paste the settings block, MQTT port default
                 "2",                      # over the limit -> "I've changed the camera: check again"
                 "n"])

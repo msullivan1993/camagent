@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Install ffmpeg (test_v11 converts a real 4K clip to 1080p)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Install
         run: python -m pip install .
       - name: Run tests

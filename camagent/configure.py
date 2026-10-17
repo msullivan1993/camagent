@@ -205,11 +205,15 @@ def step_check_stream(cfg, ffprobe):
             name = {"hevc": "H.265 (HEVC)"}.get(codec, codec.upper())
             print(f"\n  This stream is {name}. Most viewers' browsers can't play it, so they'd see a black player.")
             print("  Set this stream to H.264 in the camera's web page (Video or Encode settings; also turn off")
-            print("  any 'smart codec' or H.264+ option), or pick another stream such as the camera's sub-stream.")
+            print("  any 'smart codec' or H.264+ option), or let camagent convert it to H.264 on this computer.")
             recheck, other = "I've changed the camera to H.264: check again", "Pick a different stream"
             keep = "Keep it anyway (viewers won't see video until it's H.264)"
             auto = "Let camagent change it (needs the camera's admin login)"
-            pick = choose([recheck, other, keep, auto], str)
+            here = "Convert it to H.264 on this computer (uses this computer's GPU or CPU)"
+            pick = choose([recheck, other, keep, auto, here], str)
+            if pick == here:
+                cfg["_convert_codec"] = True
+                break
             if pick == auto:
                 _fix_stream(cam)
                 continue
@@ -228,6 +232,7 @@ def step_check_stream(cfg, ffprobe):
     for tip in tips:
         print(f"  Note: {tip}")
 
+    cfg["_codec"] = codec
     has_audio = any(x.get("codec_type") == "audio" for x in streams)
     if has_audio:
         s["audio"] = yes("The camera sends audio. Include it in the stream?", default=s["audio"])
@@ -326,6 +331,72 @@ def _from_account(cfg, main_path=None):
         cfg["_server"] = {**(cfg.get("_server") or {}), "max_height": info["max_height"]}
     print(f"  Got the connection settings for '{pick['name']}' ({pick['slug']}).")
     return True
+
+
+def step_convert(cfg, ffmpeg):
+    """A camera above 1080p (or sending H.265): convert to 1080p H.264 here, or send it as it is."""
+    from . import convert
+    s, cam = cfg["stream"], cfg["camera"]
+    height = int((cfg.get("_measure") or {}).get("height") or 0)
+    h265 = bool(cfg.get("_convert_codec")) or cfg.get("_codec") not in (None, "", "h264")
+    if height <= convert.TARGET_HEIGHT and not h265:
+        s["convert"] = "off"
+        return
+    heading("Resolution")
+    what = f"{height}p" if height else "an unknown size"
+    print(f"This camera sends {what}{' in H.265' if h265 else ''}. YonderView takes 1080p H.264 (higher resolution is")
+    print("an approved, paid option). camagent can convert it here before sending, so the camera keeps its full")
+    print("resolution for your own uses. A computer with an Intel, NVIDIA or AMD GPU does this easily (most")
+    print("mini PCs have Intel Quick Sync); otherwise the CPU does it, which needs a fairly strong one.")
+    here = "Convert to 1080p H.264 on this computer (recommended)"
+    source = f"Send the camera's own {what} (only if YonderView approved it for this camera)"
+    camera_side = "Change the camera itself to 1080p H.264 instead (camagent can do it over ONVIF)"
+    options = [here, camera_side] + ([] if h265 else [source])
+    pick = choose(options, str)
+    if pick == source:
+        s["convert"] = "off"
+        return
+    if pick == camera_side:
+        s["convert"] = "off"
+        _fix_stream(cam)
+        return
+    if not ffmpeg:
+        print("  ffmpeg isn't installed, so camagent can't convert. Install it and run setup again.")
+        s["convert"] = "off"
+        return
+    print("\nChecking this computer's video hardware (up to a minute)...")
+    results = convert.detect(ffmpeg, show=print)
+    method = convert.best(results)
+    m = cfg.get("_measure") or {}
+    width = int(m.get("width") or (height * 16 // 9 if height else 3840))
+    fps = float(m.get("actual_fps") or m.get("declared_fps") or 15)
+    room = convert.headroom(dict(results).get(method), width, height or 2160, fps)
+    url = config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])
+    scale = not height or height > convert.TARGET_HEIGHT
+    print(f"\nUsing {convert.LABELS[method]}. Converting this camera for a few seconds to check it works...")
+    speed = convert.speed_on_camera(ffmpeg, url, method, s.get("bitrate_kbps"), scale=scale)
+    if speed is None and method != "x264":
+        print(f"  {convert.LABELS[method]} couldn't convert this camera's stream; trying the CPU.")
+        method = "x264"
+        room = convert.headroom(dict(results).get("x264"), width, height or 2160, fps)
+        speed = convert.speed_on_camera(ffmpeg, url, method, s.get("bitrate_kbps"), scale=scale)
+    if speed is None:
+        print("  The conversion didn't work on this camera's stream. Sending it as it is for now;")
+        print("  'camagent doctor' can check again later.")
+        s["convert"] = "off"
+        return
+    if speed >= 0.95 and room >= 1.5:
+        print(f"  It works, with room to spare (about {room}x what this camera needs).")
+    else:
+        why = (f"it fell behind on the camera ({speed}x real time)" if speed < 0.95
+               else f"it has little spare capacity (about {room}x what this camera needs; 1.5x or more is comfortable)")
+        print(f"  This computer may struggle: {why}. Video could stutter on busy scenes (rain, wind in trees).")
+        print("  A mini PC with an Intel GPU (Quick Sync) handles this easily, or change the camera itself to 1080p.")
+        if not yes("Convert here anyway?", default=False):
+            s["convert"] = "off"
+            return
+    s.update(convert="1080p", encoder=method, source_height=height)
+    print(f"  Saved: converting to 1080p with {convert.LABELS[method]}.")
 
 
 def step_platform(cfg, main_path=None):
@@ -442,6 +513,7 @@ def _walk(cam, ffmpeg, ffprobe, main_path=None):
                 continue                          # pick another stream from the same camera
             done = True
             break
+    step_convert(cam, ffmpeg)
     step_platform(cam, main_path)
     if ffmpeg:
         cam["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too
@@ -463,10 +535,12 @@ def _finish(cam, main_path, others):
         if ok:
             limit = (cam.get("_server") or {}).get("max_height")
             height = (cam.get("_measure") or {}).get("height")
+            if cam["stream"].get("convert", "off") != "off":
+                height = min(height or 1080, 1080)                # what's sent: the converted 1080p
             if limit and height and height > limit:
                 print(f"\n  This stream is {height}p, but YonderView's limit for this camera is {limit}p,")
                 print("  so it would be declined as soon as it connects. Set the camera's stream to "
-                      f"{limit}p or lower, or pick its sub-stream.")
+                      f"{limit}p or lower, or let camagent convert it to 1080p on this computer.")
                 other, recheck = "Pick a different stream", "I've changed the camera: check again"
                 keep = "Save anyway (it will be declined until it's fixed)"
                 auto = "Let camagent change it (needs the camera's admin login)"

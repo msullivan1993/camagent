@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 
+from . import convert
 from .camera import find_ffmpeg
 from .config import redact, rtsp_with_auth, scrub, srt_url
 
@@ -26,10 +27,43 @@ class Uplink(threading.Thread):
         self._halt = threading.Event()
         self._last_frame_at = time.time()
         self._stderr = collections.deque(maxlen=20)
+        self._fast_fails = 0                      # converting: ffmpeg exits soon after starting, in a row
         self.stats = {
             "running": False, "fps": 0.0, "fps_camera": 0.0, "bitrate_kbps": 0.0, "speed": 0.0,
             "frames": 0, "restarts": 0, "started_at": None, "last_error": "",
         }
+
+    # ---------- converting to 1080p (optional) ----------
+    FAST_FAILS_TO_FALL_BACK = 3
+
+    def convert_method(self):
+        """None to send the camera's stream as it is; else how to convert it. A GPU method that keeps failing
+        right away (a driver update, the GPU switched off) falls back to the CPU instead of leaving the camera
+        offline; telemetry says so."""
+        s = self.cfg["stream"]
+        if s.get("convert", "off") == "off":
+            self.stats.pop("convert", None)
+            return None
+        method = s.get("encoder") or "x264"
+        if method != "x264" and self._fast_fails >= self.FAST_FAILS_TO_FALL_BACK:
+            if not self.stats.get("convert", {}).get("fallback"):
+                self.log.warning("%s keeps failing; converting on the CPU instead", convert.LABELS.get(method, method))
+            method, fallback = "x264", True
+        else:
+            fallback = False
+        self.stats["convert"] = {"height": convert.TARGET_HEIGHT, "encoder": method, "fallback": fallback,
+                                 "source_height": int(s.get("source_height") or 0) or None}
+        return method
+
+    # what ffmpeg says when a GPU or its encoder can't be used (not when the network or the camera drops)
+    ENCODER_TROUBLE = ("qsv", "vaapi", "cuda", "nvenc", "amf", "hwaccel", "hw device", "device creation",
+                       "no device", "cannot load", "encoder", "init", "mfx", "libva", "dxva", "d3d11")
+
+    def _encoder_trouble(self):
+        text = " ".join(self._stderr).lower()
+        if any(w in text for w in ("connection refused", "connection timed out", "srt", "rtsp", "401", "404")):
+            return False
+        return any(w in text for w in self.ENCODER_TROUBLE)
 
     # ---------- command ----------
     def command(self) -> list:
@@ -41,9 +75,15 @@ class Uplink(threading.Thread):
                "-progress", "pipe:1", "-nostats"]
         if s.get("wallclock_timestamps", True):
             cmd += ["-use_wallclock_as_timestamps", "1"]
-        cmd += ["-rtsp_transport", "tcp",
+        method = self.convert_method()
+        if method:
+            before, after = convert.args(method, s.get("bitrate_kbps"),
+                                         scale=int(s.get("source_height") or 9999) > convert.TARGET_HEIGHT)
+        else:
+            before, after = [], ["-c:v", "copy"]               # the camera's stream as it is
+        cmd += ["-rtsp_transport", "tcp", *before,
                 "-i", rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]),
-                "-map", "0:v:0", "-c:v", "copy"]
+                "-map", "0:v:0", *after]
         if s.get("audio"):
             cmd += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k", "-ar", "48000",
                     "-af", "aresample=async=1"]
@@ -159,6 +199,9 @@ class Uplink(threading.Thread):
 
             if time.time() - started > 60:      # it ran a while, so start the backoff over
                 backoff = 1
+                self._fast_fails = 0
+            elif time.time() - started < 20 and self._encoder_trouble():
+                self._fast_fails += 1
             delay, backoff = backoff, min(backoff * 2, 60)
             self.log.info("restarting in %ss", delay)
             self._halt.wait(delay)

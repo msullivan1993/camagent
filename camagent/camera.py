@@ -218,12 +218,12 @@ def scan_rtsp_paths(ffprobe, host, user, password, port=554, progress=None) -> l
 
 def measure_stream(ffprobe: str, url: str, seconds: int = 6):
     """Watch the stream for a few seconds (without decoding) and report what it really sends:
-    {"declared_fps", "actual_fps", "kbps", "keyframe_s", "height"}. Any value may be None."""
+    {"declared_fps", "actual_fps", "kbps", "keyframe_s", "width", "height"}. Any value may be None."""
     if not ffprobe:
         return {}
     cmd = [ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
            "-read_intervals", f"%+{seconds}",
-           "-show_entries", "stream=avg_frame_rate,r_frame_rate,height:packet=pts_time,size,flags",
+           "-show_entries", "stream=avg_frame_rate,r_frame_rate,width,height:packet=pts_time,size,flags",
            "-of", "json", url]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 15)
@@ -242,7 +242,8 @@ def measure_stream(ffprobe: str, url: str, seconds: int = 6):
 
     pkts = [p for p in data.get("packets", []) if p.get("pts_time") not in (None, "N/A")]
     out = {"declared_fps": rate(st.get("avg_frame_rate")) or rate(st.get("r_frame_rate")),
-           "height": st.get("height"), "actual_fps": None, "kbps": None, "keyframe_s": None}
+           "width": st.get("width"), "height": st.get("height"), "actual_fps": None, "kbps": None,
+           "keyframe_s": None}
     if len(pkts) >= 2:
         t = [float(p["pts_time"]) for p in pkts]
         span = max(t) - min(t)
@@ -264,7 +265,8 @@ def stream_advice(m: dict, max_height=None):
     fps, actual, gop, h = m.get("declared_fps"), m.get("actual_fps"), m.get("keyframe_s"), m.get("height")
     if max_height and h and h > max_height:
         tips.append(f"The stream is {h}p but this camera's limit on YonderView is {max_height}p: it would be "
-                    f"declined. Set the camera's stream to {max_height}p or lower, or pick its sub-stream.")
+                    f"declined. Set the camera's stream to {max_height}p or lower, or let camagent convert it "
+                    f"to 1080p on this computer (camagent configure).")
     if fps and actual and actual < 0.85 * fps:
         tips.append(f"Only {actual:g} of {fps:g} frames per second actually arrived. In low light many cameras "
                     "slow down on their own; otherwise the camera may be overloaded.")

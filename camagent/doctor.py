@@ -131,6 +131,31 @@ def run(config_path=None, camera_id=None):
     return _summary(r)
 
 
+def _check_convert(r, cfg, cid):
+    """Converting to 1080p here: is the chosen method still usable on this computer (drivers change)?"""
+    from . import convert
+    s = cfg["stream"]
+    if s.get("convert", "off") == "off":
+        return
+    method = s.get("encoder") or "x264"
+    ffmpeg = camera.find_ffmpeg(s.get("ffmpeg", ""))
+    if not ffmpeg:
+        return
+    import tempfile
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            speed = convert.try_method(ffmpeg, method, convert._test_clip(ffmpeg, d))
+    except Exception:  # noqa: BLE001
+        speed = None
+    if speed:
+        r.line(OK, "Converting to 1080p", f"{convert.LABELS[method]} works ({speed}x real time on a 4K test clip)")
+    elif method == "x264":
+        r.line(FAIL, "Converting to 1080p", "the CPU conversion doesn't work", "reinstall ffmpeg (camagent doctor shows how)")
+    else:
+        r.line(WARN, "Converting to 1080p", f"{convert.LABELS[method]} doesn't work here any more (the service "
+               "falls back to the CPU)", f"update the graphics driver, or run camagent configure {cid} to check again")
+
+
 def _check_camera(r, cfg, ffprobe):
     cam, plat = cfg["camera"], cfg["platform"]
     cid = plat.get("camera_id") or "?"
@@ -159,12 +184,20 @@ def _check_camera(r, cfg, ffprobe):
             if streams:
                 r.line(OK, "Camera stream", camera.describe(streams))
                 video = next((x for x in streams if x.get("codec_type") == "video"), None)
-                if video and video.get("codec_name") != "h264":
+                converting = cfg["stream"].get("convert", "off") != "off"
+                if video and video.get("codec_name") != "h264" and not converting:
                     r.line(FAIL, "Video codec", f"{video.get('codec_name')}: most viewers' browsers can't play it",
-                           "set this stream to H.264 in the camera's web page (and turn off 'smart codec'/H.264+)")
+                           "set this stream to H.264 in the camera's web page (and turn off 'smart codec'/H.264+), "
+                           f"or let camagent convert it (camagent configure {cid})")
+                elif video and (video.get("height") or 0) > 1080 and not converting:
+                    r.line(WARN, "Resolution", f"{video.get('height')}p is sent as it is",
+                           f"fine if YonderView approved it for this camera; otherwise let camagent convert it to "
+                           f"1080p (camagent configure {cid})")
             else:
                 r.line(FAIL, "Camera stream", f"can't read {config.strip_auth(cam['rtsp_url'])}",
                        f"check the RTSP URL and camera login (camagent configure {cid})")
+
+    _check_convert(r, cfg, cid)
 
     host = plat.get("ingest_host")
     if host:

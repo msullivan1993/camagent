@@ -29,6 +29,10 @@ DEFAULTS = {
         "srt_latency_ms": 400,
         "wallclock_timestamps": True,
         "stall_seconds": 15,     # restart ffmpeg if no new frames for this long
+        "convert": "off",        # "1080p": convert a bigger (or H.265) camera to 1080p H.264 here before sending
+        "encoder": "x264",       # how to convert (chosen by setup's hardware check): qsv, vaapi, nvenc, amf, x264...
+        "bitrate_kbps": 4500,    # the converted stream's bitrate
+        "source_height": 0,      # the camera's own picture height, measured at setup
         "ffmpeg": "",            # full path; blank = find on PATH
     },
     "platform": {

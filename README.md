@@ -65,12 +65,17 @@ asks for administrator rights itself. The commands below still work for scripts 
 2. **Picking the stream**: asks the camera for its streams over ONVIF and lists them with
    resolution and codec. If ONVIF isn't available, it tries common RTSP addresses for popular brands.
 3. **Checking the stream** with ffprobe, and offering to include audio if the camera sends it.
-4. **Server details**: easiest, **sign in to YonderView**: camagent shows a short code, you enter it at
+4. **Resolution**: YonderView takes 1080p H.264. If the camera sends more (4K, 1440p...) or H.265, camagent
+   offers to convert it to 1080p on this computer, so the camera keeps its full resolution for your own uses.
+   It tests this computer's video hardware first (Intel Quick Sync, VA-API, NVIDIA, AMD; the CPU last) and
+   uses the first that works. A small PC with an Intel GPU does it easily. Sending above 1080p is also
+   possible where YonderView has approved it for the camera.
+5. **Server details**: easiest, **sign in to YonderView**: camagent shows a short code, you enter it at
    yonderview.net/link on your phone or another computer (signed in there, so your password never goes
    through camagent), approve this computer, and pick the camera from your account. camagent fetches its
    connection settings itself. Or paste the settings block from the camera's **Connection** page.
    Linked computers are listed on your profile on yonderview.net, where you can unlink them.
-5. **Testing** the server login, saving the config, and installing the service.
+6. **Testing** the server login, saving the config, and installing the service.
 
 Run it again at any time to change settings; Enter keeps the current value.
 
