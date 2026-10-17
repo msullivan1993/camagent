@@ -28,6 +28,8 @@ class Uplink(threading.Thread):
         self._last_frame_at = time.time()
         self._stderr = collections.deque(maxlen=20)
         self._fast_fails = 0                      # converting: ffmpeg exits soon after starting, in a row
+        self._audio_off_until = 0.0               # camera announces audio but sends none: video only until then
+        self._audio_now = False
         self.stats = {
             "running": False, "fps": 0.0, "fps_camera": 0.0, "bitrate_kbps": 0.0, "speed": 0.0,
             "frames": 0, "restarts": 0, "started_at": None, "last_error": "",
@@ -35,6 +37,7 @@ class Uplink(threading.Thread):
 
     # ---------- converting to 1080p (optional) ----------
     FAST_FAILS_TO_FALL_BACK = 3
+    AUDIO_RETRY_S = 1800
 
     def convert_method(self):
         """None to send the camera's stream as it is; else how to convert it. A GPU method that keeps failing
@@ -84,7 +87,12 @@ class Uplink(threading.Thread):
         cmd += ["-rtsp_transport", "tcp", *before,
                 "-i", rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]),
                 "-map", "0:v:0", *after]
+        self._audio_now = bool(s.get("audio")) and time.time() >= self._audio_off_until
         if s.get("audio"):
+            self.stats["audio"] = "on" if self._audio_now else "missing"
+        else:
+            self.stats.pop("audio", None)
+        if self._audio_now:
             cmd += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k", "-ar", "48000",
                     "-af", "aresample=async=1"]
         else:
@@ -183,6 +191,13 @@ class Uplink(threading.Thread):
                 if time.time() - self._last_frame_at > stall:
                     self.log.warning("no new frames for %ss; restarting ffmpeg", stall)
                     self._kill()
+                    if self._audio_now and self.stats.get("frames", 0) == 0:
+                        # nothing went out at all: ffmpeg waits for every stream, and the camera lists audio but
+                        # sends none (often after its settings changed). Send video only; try sound again later.
+                        self._audio_off_until = time.time() + self.AUDIO_RETRY_S
+                        self.log.warning("the camera lists audio but sends none; sending video only (trying "
+                                         "audio again in %s minutes)", self.AUDIO_RETRY_S // 60)
+                        planned = True
                     break
                 self._halt.wait(1)
 

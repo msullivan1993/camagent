@@ -197,6 +197,12 @@ def _check_camera(r, cfg, ffprobe):
                 r.line(FAIL, "Camera stream", f"can't read {config.strip_auth(cam['rtsp_url'])}",
                        f"check the RTSP URL and camera login (camagent configure {cid})")
 
+    if cfg["stream"].get("audio") and cam.get("rtsp_url") and ffprobe:
+        url = config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])
+        if camera.audio_arrives(ffprobe, url) is False:
+            r.line(WARN, "Audio", "audio is on, but the camera sends no sound (the stream goes out video only)",
+                   f"turn the camera's audio on in its web page, or turn audio off: camagent configure {cid}")
+
     _check_convert(r, cfg, cid)
 
     host = plat.get("ingest_host")

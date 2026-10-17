@@ -187,6 +187,20 @@ def probe(ffprobe: str, url: str, timeout: float = 8.0):
     return streams or None
 
 
+def audio_arrives(ffprobe: str, url: str, seconds: int = 4):
+    """True if the camera actually sends sound (not just lists an audio track), False if not, None if unknown.
+    Some cameras keep announcing audio after it's switched off, and ffmpeg then waits for it forever."""
+    if not ffprobe:
+        return None
+    cmd = [ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "a:0",
+           "-read_intervals", f"%+{seconds}", "-show_entries", "packet=pts_time", "-of", "csv=p=0", url]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=seconds + 15)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return any(line.strip() for line in r.stdout.splitlines())
+
+
 def describe(streams) -> str:
     parts = []
     for s in streams or []:

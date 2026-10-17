@@ -234,6 +234,11 @@ def step_check_stream(cfg, ffprobe):
 
     cfg["_codec"] = codec
     has_audio = any(x.get("codec_type") == "audio" for x in streams)
+    if has_audio and camera.audio_arrives(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"],
+                                                                         cam["password"])) is False:
+        print("  The camera lists an audio track but isn't sending any sound (audio may be switched off in its")
+        print("  settings). Sending video only; turn the camera's audio on and run setup again to add sound.")
+        has_audio = False
     if has_audio:
         s["audio"] = yes("The camera sends audio. Include it in the stream?", default=s["audio"])
     else:
