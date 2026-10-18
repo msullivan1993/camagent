@@ -1,6 +1,6 @@
 """Run with: python tests/test_v14.py  (from the repo folder).
 Raspberry Pi and Rockchip video engines for converting and for host-made versions (0.14)."""
-import sys
+import json, sys, time
 from pathlib import Path
 from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -35,4 +35,31 @@ cmd = V.args("ffmpeg", "v4l2m2m-lite", "rtsp://cam", outs)
 assert cmd.count("h264_v4l2m2m") == 2
 cmd = V.args("ffmpeg", "rkmpp", "rtsp://cam", outs)
 assert cmd.count("h264_rkmpp") == 2 and "format=nv12" in cmd[cmd.index("-filter_complex") + 1]
+# 4. The versions check uses a 1080p clip (a Pi's decoder stops at 1080p); converting keeps its 4K one
+import tempfile
+seen = []
+with mock.patch("subprocess.run", side_effect=lambda cmd, **k: seen.append(cmd) or mock.Mock(returncode=0)):
+    with tempfile.TemporaryDirectory() as d:
+        convert._test_clip("ffmpeg", d, "1920x1080")
+        convert._test_clip("ffmpeg", d)
+assert "testsrc2=size=1920x1080:rate=15" in seen[0] and "testsrc2=size=3840x2160:rate=15" in seen[1]
+import inspect
+assert 'size="1920x1080"' in inspect.getsource(V.Versions._find_method)
+
+# 5. GPU decoding keeps failing on a real camera: fall back to decoding on the CPU before giving up
+from camagent import config
+c = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
+c["platform"].update(camera_id="pi_0001")
+c["stream"].update(encoder="v4l2m2m")
+v = V.Versions(c)
+assert v.method == "v4l2m2m"
+v.wanted = json.dumps([[], None]); v.keep_until = time.time() + 600
+v.fast_fails = V.MAX_FAST_FAILS - 1
+v.started = time.time()
+v.proc = mock.Mock(poll=mock.Mock(return_value=1))
+with mock.patch.object(v, "_start"):
+    v._stop.wait = mock.Mock(side_effect=[False, True])        # one pass of the watch loop
+    v._watch()
+assert v.method == "v4l2m2m-lite" and not v.gave_up
+v.stop()
 print("test_v14: all good")

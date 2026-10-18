@@ -68,7 +68,7 @@ dying = d / "ffmpeg-dies"
 dying.write_text(f"#!/bin/sh\necho 'versions ffmpeg: Unknown encoder' >&2\nexit 1\n")
 dying.chmod(dying.stat().st_mode | stat.S_IEXEC)
 with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(fake)), \
-     mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None: [("qsv", 5.0)]):
+     mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None, size=None: [("qsv", 5.0)]):
     v = Versions(cfg(source_height=1080))
     assert v.capability() == dict(v.capability(), ok=True, method="unchecked")   # no hardware check at startup
     r = v.want(LADDER, MARK, keep_s=180)
@@ -90,7 +90,7 @@ with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(fake)), \
     assert not v.running() and v.wanted is None
     v.shutdown()
 with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(dying)), \
-     mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None: [("qsv", 5.0)]), \
+     mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None, size=None: [("qsv", 5.0)]), \
      mock.patch.object(V, "FAST_S", 60):
     v = Versions(cfg(source_height=1080))
     v.want(LADDER, MARK); time.sleep(0.3)                    # first: the check
@@ -132,7 +132,7 @@ with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(slow)), \
 
 # 7. The agent: the website's "versions" command, and the capability in telemetry
 from camagent.agent import CameraAgent
-with mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None: [("qsv", 5.0)]):
+with mock.patch("camagent.versions.convert.detect", lambda ff, methods=None, show=None, size=None: [("qsv", 5.0)]):
     a = CameraAgent(cfg(source_height=1080, ffmpeg=str(fake)))
     time.sleep(0.3)
     with mock.patch.object(a.versions, "want", return_value={"ok": True}) as want, \

@@ -159,7 +159,8 @@ class Versions:
             ffmpeg = find_ffmpeg(s.get("ffmpeg", ""))
             if not ffmpeg:
                 return
-            results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS])
+            results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
+                                     size="1920x1080")         # what cameras send (YonderView takes 1080p)
             self.method = next((m for m, speed in results if speed), None)
             if self.method:
                 self.log.info("this PC can make lower-quality versions (%s)", convert.LABELS.get(self.method))
@@ -304,6 +305,12 @@ class Versions:
                 if self.proc and self.proc.poll() is not None:
                     quick = time.time() - getattr(self, "started", 0) < FAST_S
                     self.fast_fails = self.fast_fails + 1 if quick else 0
+                    lite = f"{self.method}-lite"
+                    if self.fast_fails >= MAX_FAST_FAILS and lite in GPU_METHODS:
+                        # decoding on the GPU fails on this camera (e.g. 4K on a Raspberry Pi): decode on the CPU
+                        self.log.warning("versions keep failing with %s; decoding on the CPU instead",
+                                         convert.LABELS.get(self.method))
+                        self.method, self.fast_fails = lite, 0
                     if self.fast_fails >= MAX_FAST_FAILS:
                         self.gave_up, self.wanted = time.time(), None
                         self.log.warning("versions keep failing (%s); the server will make them", self.error)

@@ -90,11 +90,11 @@ def args(method, kbps=DEFAULT_KBPS, scale=True, height=TARGET_HEIGHT):
                  "-tune", "zerolatency", "-profile:v", "high", *rate, *keys])
 
 
-def _test_clip(ffmpeg, folder):
-    """A 2-second 4K H.264 clip (made on the CPU) to try each method on."""
+def _test_clip(ffmpeg, folder, size="3840x2160"):
+    """A 2-second H.264 clip (made on the CPU) to try each method on: 4K for converting a bigger camera."""
     clip = os.path.join(folder, "yv-convert-test.mp4")
     subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
-                    "-i", "testsrc2=size=3840x2160:rate=15", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
+                    "-i", f"testsrc2=size={size}:rate=15", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
                     "-pix_fmt", "yuv420p", clip], check=True, capture_output=True, timeout=120)
     return clip
 
@@ -113,11 +113,12 @@ def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60):
     return round(seconds / elapsed, 1) if r.returncode == 0 else None
 
 
-def detect(ffmpeg, methods=None, show=None):
-    """[(method, speed or None)] for every candidate on this computer, best first."""
+def detect(ffmpeg, methods=None, show=None, size="3840x2160"):
+    """[(method, speed or None)] for every candidate on this computer, best first. size: the test clip's (1080p for
+    host-made versions, so a Raspberry Pi's decoder, which stops at 1080p, can pass)."""
     out = []
     with tempfile.TemporaryDirectory() as d:
-        clip = _test_clip(ffmpeg, d)
+        clip = _test_clip(ffmpeg, d, size)
         for m in methods or candidates():
             speed = try_method(ffmpeg, m, clip)
             out.append((m, speed))

@@ -202,7 +202,7 @@ versions = "off"      # never
 ```
 
 **Raspberry Pi and Rockchip boards (0.14).** On a Raspberry Pi 3 or 4, camagent uses the Pi's own video engine
-(`h264_v4l2m2m`, up to 1080p; Raspberry Pi OS's ffmpeg has it). The Pi 5 has no video encoder, so it would need
+(`h264_v4l2m2m`, up to 1080p; Raspberry Pi OS's ffmpeg has it). It decodes the camera there too; the engine handles about 1080p30 of work in all, so a 1080p30 camera's 720p and 480p fit at reduced frame rates (the site's ladder sets them), and a Pi 3's CPU can't take over the decoding. The Pi 5 has no video encoder, so it would need
 `versions = "cpu"`. Rockchip boards (e.g. Radxa Rock) work with an ffmpeg built with Rockchip MPP (`h264_rkmpp`, from
 the ffmpeg-rockchip packages); with the stock Debian ffmpeg the check finds nothing and the server keeps making the
 versions. The same engines also convert H.265 cameras to H.264.
