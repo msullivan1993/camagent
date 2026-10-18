@@ -3,13 +3,15 @@
 YonderView takes 1080p (above that is an approved, paid option), so a host can keep the camera's full resolution
 for their own uses and still send 1080p. It's still the camera's one main stream (no substreams): camagent decodes
 it, shrinks it and encodes it again. A computer's video hardware does that with little effort (Intel Quick Sync on
-most mini PCs, NVIDIA, AMD); the CPU (x264) is the fallback.
+most mini PCs, NVIDIA, AMD; the video engine on a Raspberry Pi 3/4 or a Rockchip board); the CPU (x264) is the
+fallback.
 
 Methods, tried in order by detect() on a short 4K test clip, so a GPU that's present but unusable (drivers, BIOS)
 is simply skipped. "-lite" variants decode and shrink on the CPU and only encode on the GPU, for setups where the
 full GPU path doesn't work. Output for every method: H.264, no B-frames (low-delay viewing), a keyframe every 2 s,
 constant-ish bitrate."""
 import os
+import platform
 import subprocess
 import tempfile
 import time
@@ -22,15 +24,23 @@ LABELS = {
     "vaapi": "VA-API (Intel/AMD GPU)", "vaapi-lite": "VA-API (GPU encoding)",
     "nvenc": "NVIDIA (GPU)", "nvenc-lite": "NVIDIA (GPU encoding)",
     "amf": "AMD (GPU encoding)",
+    "v4l2m2m": "Raspberry Pi video engine", "v4l2m2m-lite": "Raspberry Pi video engine (encoding)",
+    "rkmpp": "Rockchip video engine (encoding)",
     "x264": "the CPU (x264)",
 }
 VAAPI_DEVICE = "/dev/dri/renderD128"
+
+
+ARM = ("aarch64", "arm64", "armv7l", "armv8l")
 
 
 def candidates():
     """Methods to try on this platform, best first."""
     if os.name == "nt":
         return ["qsv", "qsv-lite", "nvenc", "nvenc-lite", "amf", "x264"]
+    if platform.machine().lower() in ARM:
+        # Raspberry Pi 3/4 (the Pi 5 has no video encoder), then Rockchip boards with a Rockchip build of ffmpeg
+        return ["v4l2m2m", "v4l2m2m-lite", "rkmpp", "x264"]
     return ["vaapi", "vaapi-lite", "qsv", "qsv-lite", "nvenc", "nvenc-lite", "x264"]
 
 
@@ -66,6 +76,15 @@ def args(method, kbps=DEFAULT_KBPS, scale=True, height=TARGET_HEIGHT):
     if method == "amf":
         return ([], (["-vf", ",".join(sw_scale)] if sw_scale else []) +
                 ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cbr", *rate, *keys])
+    if method in ("v4l2m2m", "v4l2m2m-lite"):
+        # the Pi's H.264 engine (up to 1080p): decode on it too, or on the CPU ("-lite", for anything it can't
+        # decode, e.g. 4K); it takes yuv420p frames in system memory
+        return (["-c:v", "h264_v4l2m2m"] if method == "v4l2m2m" else [],
+                ["-vf", ",".join(sw_scale + ["format=yuv420p"]), "-c:v", "h264_v4l2m2m", *rate, *keys])
+    if method == "rkmpp":
+        # needs ffmpeg built with Rockchip MPP (e.g. the ffmpeg-rockchip packages); decoding stays on the CPU
+        return ([], ["-vf", ",".join(sw_scale + ["format=nv12"]), "-c:v", "h264_rkmpp", "-rc_mode", "CBR",
+                     *rate, *keys])
     # x264: the CPU
     return ([], ["-vf", ",".join(sw_scale + ["format=yuv420p"]), "-c:v", "libx264", "-preset", "veryfast",
                  "-tune", "zerolatency", "-profile:v", "high", *rate, *keys])

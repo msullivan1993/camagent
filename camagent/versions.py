@@ -23,7 +23,8 @@ from . import convert
 from .camera import find_ffmpeg
 from .config import redact, rtsp_with_auth, scrub, srt_url
 
-GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf")
+GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "v4l2m2m", "v4l2m2m-lite",
+               "rkmpp")
 MAX_FAST_FAILS = 3          # ffmpeg dying this many times within FAST_S of starting: give up (the server takes over)
 FAST_S = 20
 SLOW_SPEED = 0.9            # slower than this (x real time)...
@@ -47,6 +48,12 @@ def encoder(method):
         return ["-hwaccel", "cuda"], ["-c:v", "h264_nvenc", "-preset", "p3", "-tune", "ll"], "format=nv12"
     if base == "amf":
         return ["-hwaccel", "auto"], ["-c:v", "h264_amf", "-quality", "speed"], "format=nv12"
+    if method == "v4l2m2m":                        # Raspberry Pi: decode on its video engine too
+        return ["-c:v", "h264_v4l2m2m"], ["-c:v", "h264_v4l2m2m"], "format=yuv420p"
+    if method == "v4l2m2m-lite":
+        return [], ["-c:v", "h264_v4l2m2m"], "format=yuv420p"
+    if base == "rkmpp":
+        return [], ["-c:v", "h264_rkmpp", "-rc_mode", "CBR"], "format=nv12"
     return [], ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"], "format=yuv420p"
 
 
