@@ -74,7 +74,7 @@ Refresh-Path
 
 # Start menu shortcut: opens the camagent menu (it asks for administrator rights itself)
 try {
-    $lnk = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\camagent.lnk"
+    $lnk = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\CamAgent.lnk"
     $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk)
     $sc.TargetPath = $venvPy
     $sc.Arguments = "-m camagent"

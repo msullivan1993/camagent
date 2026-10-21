@@ -1,17 +1,55 @@
-# camagent
+# CamAgent
 
-The YonderView site agent. One program that:
+CamAgent sends your camera to [YonderView](https://yonderview.net). Install it on a computer that's on
+the same network as the camera (a Windows PC, a mini PC or a Raspberry Pi) and leave that computer on.
+
+## First-time setup (about 10 minutes)
+
+**Before you start:** on yonderview.net, sign in (or create an account), choose **Host a camera**, and
+wait for the camera to be approved. Have the camera plugged in, and know its username and password
+(the ones for its app or web page).
+
+**1. Install CamAgent.**
+
+On **Windows**: press the Windows key, type `PowerShell`, right-click **Windows PowerShell** and choose
+**Run as administrator**. Paste this line (right-click pastes) and press Enter:
+
+```powershell
+irm https://raw.githubusercontent.com/msullivan1993/camagent/main/scripts/install.ps1 | iex
+```
+
+On a **Raspberry Pi or Linux** computer (Debian, Ubuntu, Raspberry Pi OS): open a terminal, paste this
+line and press Enter (it asks for your password):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/msullivan1993/camagent/main/scripts/install.sh | sudo bash
+```
+
+The installer sets up everything CamAgent needs (Python, ffmpeg and Git). Running it again upgrades
+CamAgent and never touches your settings.
+
+**2. Open CamAgent.** On Windows, use the **CamAgent** shortcut in the Start menu, or type `camagent` in
+an administrator PowerShell. On Linux, type `sudo camagent`.
+
+**3. Choose "2. Add a camera"** and answer the questions. CamAgent finds the camera, checks its video,
+signs in to YonderView (you type a code at yonderview.net/link), tests the connection, and starts
+sending. Within a minute your camera shows **Live** on yonderview.net.
+
+Stuck? Open CamAgent and choose **Check for problems**: it says what's wrong and what to do. Or use
+**Report a problem** on yonderview.net.
+
+## How it works (technical)
 
 - pulls the camera's stream over RTSP and sends it to the server over SRT (ffmpeg, supervised and auto-restarted)
 - connects to the MQTT broker and handles PTZ commands over ONVIF, with a local safety stop
 - publishes online/offline status and telemetry (fps, bitrate, restarts, PTZ state)
 - runs as a service on Linux (systemd) and Windows (WinSW)
 
-Everything is configured in one file, `camagent.toml`, using an interactive setup.
+Everything is configured in one file, `camagent.toml`, using the interactive setup.
 
 ## Requirements
 
-The install scripts below set these up automatically. If you install another way, you need:
+The install scripts set these up automatically. If you install another way, you need:
 
 | | Linux / Raspberry Pi | Windows |
 |---|---|---|
@@ -19,43 +57,38 @@ The install scripts below set these up automatically. If you install another way
 | ffmpeg | `sudo apt install ffmpeg` | `winget install -e --id Gyan.FFmpeg` |
 | Git | `sudo apt install git` | `winget install -e --id Git.Git` |
 
-camagent won't stream video without ffmpeg. `camagent doctor` checks for all of it.
-
-## Install
-
-**Linux / Raspberry Pi** (Debian, Ubuntu, Raspberry Pi OS):
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/msullivan1993/camagent/main/scripts/install.sh | sudo bash
-sudo camagent configure
-```
-
-**Windows** (PowerShell as Administrator):
-
-```powershell
-irm https://raw.githubusercontent.com/msullivan1993/camagent/main/scripts/install.ps1 | iex
-camagent configure
-```
-
-The installers set up Python, ffmpeg, and Git if needed, install camagent into its own
-environment, and never overwrite an existing config. Run them again to upgrade.
-
-While the repository is private, give the installer a read-only token:
-
-```bash
-sudo CAMAGENT_REPO=https://TOKEN@github.com/msullivan1993/camagent.git bash install.sh
-```
-```powershell
-$env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
-```
+CamAgent won't stream video without ffmpeg. **Check for problems** (`camagent doctor`) checks for all of it.
 
 ## The menu
 
-Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
-everything: show cameras and status, add a camera, check everything, and short groups for changing or
-removing a camera, the service and its log, updates, your YonderView sign-in, and more tools (finding
-cameras on the network, what a camera supports, fixing its stream). On Windows it
-asks for administrator rights itself. The commands below still work for scripts and remote use.
+Run `camagent` on its own (or the **CamAgent** Start menu shortcut on Windows) for a menu with
+everything, grouped by what you're doing:
+
+```
+=== CamAgent 0.14.1 ===
+1 camera  |  CamAgent is running  |  YonderView: signed in as Mike
+
+ Cameras
+  1. See my cameras and how they're doing
+  2. Add a camera
+  3. Change or remove a camera...
+
+ If something's wrong
+  4. Check for problems
+  5. Restart CamAgent
+  6. Show the recent log
+
+ Settings
+  7. Sign out of YonderView
+  8. Updates...
+  9. Advanced tools...
+
+  0. Quit
+```
+
+The line under the title says what to do next when something's missing (no cameras yet, CamAgent not
+started). On Windows it asks for administrator rights itself. The commands below still work for scripts
+and remote use.
 
 ## Setup
 
@@ -155,8 +188,8 @@ Upgrading from 0.1.x: the existing camera keeps working as is. The first time it
 
 ## Troubleshooting
 
-Run `camagent doctor` first (as administrator, or with `sudo` on Linux). It checks every
-piece the agent depends on and says what to do about anything that fails.
+Open CamAgent and choose **Check for problems** (or run `camagent doctor` as administrator, or with `sudo`
+on Linux). It checks every piece CamAgent depends on and says what to do about anything that fails.
 
 ## Files
 

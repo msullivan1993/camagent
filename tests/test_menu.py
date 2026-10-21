@@ -14,9 +14,10 @@ m = config.load_or_defaults(main); m["account"].update(token="yva_x", name="Mike
 
 answers = iter(["1", "",                  # show cameras, Enter
                 "x",                      # not a choice: asked again
-                "3", "0",                 # Change a camera... then Back (straight back to the main menu)
-                "3", "3", "n", "",        # Change a camera > Remove it -> say no, Enter
-                "7", "1", "",             # YonderView account > Sign out (signed in), Enter
+                "3", "0",                 # Change or remove a camera... then Go back (straight back to the main menu)
+                "3", "3", "n", "",        # Change or remove > Remove a camera -> say no, Enter
+                "7", "n", "",             # Sign out of YonderView -> asked first: no, Enter
+                "7", "y", "",             # ...and yes, Enter
                 "0"])                     # quit
 with mock.patch.object(builtins, "input", lambda *a: next(answers)), \
      mock.patch.object(menu.service, "is_admin", lambda: True), \

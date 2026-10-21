@@ -5,24 +5,25 @@ INTRO = """
 Welcome! This connects a camera to YonderView. It takes about five minutes.
 
 You'll need:
-  1. The camera, on the same network as this computer, with its IP address.
-     (Find it in the camera's phone app, in your router's list of connected
-     devices, or let the search below look for it.)
-  2. A login for the camera. Many cameras need a separate "ONVIF" user for
-     this; tips are shown in the next step if the login doesn't work.
-  3. The camera's settings block from yonderview.net:
-     open your camera's page > Connection > Generate credentials > copy it.
+  1. Your camera, plugged in and on the same network (or Wi-Fi) as this
+     computer. CamAgent can search for it. If it can't, the camera's address
+     (four numbers like 192.168.1.64) is in its phone app or your router's
+     list of devices.
+  2. The username and password you use for the camera's app or web page.
+  3. A YonderView account with this camera added and approved
+     (on yonderview.net: Host a camera).
 
-Steps: camera > stream > server > test. Nothing is saved until the end.
-Press Enter to keep a value shown in [brackets]. Press Ctrl+C to cancel.
+Tip: "the camera's web page" means typing its address into a web browser on
+this network (for example http://192.168.1.64) and signing in. That's where
+its video and ONVIF settings are.
+
+Four steps: your camera, its video, your YonderView account, then a test.
+Nothing is saved until the end. Press Enter to keep a value shown in
+[brackets]; press Ctrl+C to cancel.
 """
 
-CAMERA = """Step 1 of 4: the camera
-camagent talks to the camera over ONVIF (a standard most IP cameras support)
-to find its video streams and, for PTZ cameras, to steer it.
-  * ONVIF port: usually 80. Reolink uses 8000; some others use 8080 or 8899.
-  * Login: use the camera's admin login, or an ONVIF user if the camera has
-    a separate one (see the tips below if it's rejected).
+CAMERA = """CamAgent finds your camera on this network and asks it for its video. Most cameras
+allow this through a standard called ONVIF; if yours doesn't, the next steps say how to turn it on.
 """
 
 ONVIF_USERS = """Where to turn on ONVIF or add an ONVIF user (menus vary by model):
@@ -36,46 +37,45 @@ Also check the camera's clock is set automatically (NTP): ONVIF logins fail
 when the camera's time is far off.
 """
 
-STREAM = """Step 2 of 4: the stream
-Cameras usually offer a "main" stream (full quality) and a smaller "sub" stream.
-Send the main stream.
-  Required:     H.264 (not H.265); within this camera's resolution limit on
-                YonderView (1080p unless raised); a keyframe at least every
-                4 seconds. Turn off "smart codec" / "H.264+" options.
-  Recommended:  1080p at 30 fps, 4-6 Mbps (VBR capped near 8), keyframe
-                every 2 seconds (I-frame interval 60 at 30 fps).
-  Everything else is up to you. Higher quality is welcome if your upload can
-  carry it. (Settings are under Video, Encode or Camera > Video in the
-  camera's own web page.)
+STREAM = """Send the camera's main (full-quality) video: H.264, 1080p or less, with a
+keyframe at least every 4 seconds. CamAgent checks this for you below.
 """
 
-RTSP_PATHS = """If you know your camera's brand, its RTSP address usually looks like:
-  * Amcrest / Dahua:  rtsp://IP:554/cam/realmonitor?channel=1&subtype=0
-  * Hikvision:        rtsp://IP:554/Streaming/Channels/101
-  * Reolink:          rtsp://IP:554/h264Preview_01_main
-  * Axis:             rtsp://IP:554/axis-media/media.amp
-Leave the login out of the address; camagent adds it.
+STREAM_DETAILS = """Camera video settings (under Video, Encode or Camera > Video in the camera's web page):
+  Required:     H.264 (not H.265); this camera's resolution limit on YonderView
+                (1080p unless raised); a keyframe at least every 4 seconds.
+                Turn off "smart codec" / "H.264+" options.
+  Recommended:  1080p at 30 fps, 4-6 Mbps (megabits per second) is plenty,
+                a keyframe (a full picture) every 2 seconds: set "I-frame
+                interval" or "keyframe interval" to twice the frame rate,
+                e.g. 60 at 30 fps.
+  Everything else is up to you.
 """
 
-SERVER = """Step 3 of 4: YonderView
-Easiest: sign in to YonderView. camagent shows a code; enter it at
-yonderview.net/link on your phone or another computer, then pick the camera.
-Or, on yonderview.net, open your camera's page, then Settings > Connection >
-Generate credentials, and paste the whole settings block here. (It's shown
-only once; if you lose it, generate a new one and the old one stops working.)
+RTSP_PATHS = """The video address (RTSP) for common brands, with your camera's address filled in:
+  * Amcrest / Dahua:  rtsp://{ip}:554/cam/realmonitor?channel=1&subtype=0
+  * Hikvision:        rtsp://{ip}:554/Streaming/Channels/101
+  * Reolink:          rtsp://{ip}:554/h264Preview_01_main
+  * Axis:             rtsp://{ip}:554/axis-media/media.amp
+Not listed? Search the web for "<your camera model> RTSP address", or check its manual.
+Leave the username and password out of the address; CamAgent adds them.
 """
 
-TEST = "Step 4 of 4: testing the connection to YonderView"
+SERVER = """Before this step, your camera must be added on yonderview.net (Host a camera) and approved.
+Easiest: sign in. CamAgent shows a code; enter it at yonderview.net/link on
+your phone or another computer, then pick this camera.
+Or paste the settings block from your camera's page on yonderview.net
+(Settings > Connection > Generate credentials). It's shown only once; making a
+new one turns the old one off.
+"""
 
 DONE = """
-All set. What happens now:
-  * camagent runs in the background and starts with the computer. Keep this
-    computer on and stop it from sleeping (Windows: Settings > System >
+You're done! Within a minute, open yonderview.net, find your camera and check it says Live.
+  * Keep this computer on, and don't let it sleep (Windows: Settings > System >
     Power > Screen and sleep > "Never" while plugged in).
-  * Within a minute, your camera's page on yonderview.net should show Live.
-  * To check on it here: run camagent and choose "Show cameras and their
-    status", or "Check everything" if something looks wrong.
-  * Something not working? Use "Report a problem" on yonderview.net.
+  * To check on it later, open CamAgent and choose "See my cameras", or
+    "Check for problems" if something looks wrong.
+  * Stuck? Use "Report a problem" on yonderview.net.
 """
 
 
