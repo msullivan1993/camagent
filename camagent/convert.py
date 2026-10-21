@@ -121,14 +121,14 @@ def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60):
     return round(seconds / elapsed, 1)
 
 
-def detect(ffmpeg, methods=None, show=None, size="3840x2160"):
+def detect(ffmpeg, methods=None, show=None, size="3840x2160", timeout=60):
     """[(method, speed or None)] for every candidate on this computer, best first. size: the test clip's (1080p for
     host-made versions, so a Raspberry Pi's decoder, which stops at 1080p, can pass)."""
     out = []
     with tempfile.TemporaryDirectory() as d:
         clip = _test_clip(ffmpeg, d, size)
         for m in methods or candidates():
-            speed = try_method(ffmpeg, m, clip)
+            speed = try_method(ffmpeg, m, clip, timeout=timeout)
             out.append((m, speed))
             if show:
                 show(f"  {LABELS[m]}: " + (f"works ({speed}x real time on a 4K test clip)" if speed else "not available here"))

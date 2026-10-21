@@ -200,7 +200,8 @@ class Versions:
             if not ffmpeg:
                 return
             results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
-                                     size="1920x1080")         # what cameras send (YonderView takes 1080p)
+                                     size="1920x1080",         # what cameras send (YonderView takes 1080p)
+                                     timeout=20)               # a 2 s clip: a working engine needs well under 10 s
             self.method = next((m for m, speed in results if speed), None)
             if self.method:
                 self.log.info("this PC can make lower-quality versions (%s)", convert.LABELS.get(self.method))
@@ -326,7 +327,8 @@ class Versions:
         if p and p.poll() is None:
             p.terminate()
             try:
-                p.wait(5)
+                p.wait(10)                         # let ffmpeg close the video engine itself: a Raspberry Pi's
+                                                   # engine can hang until a reboot if killed mid-drain
             except subprocess.TimeoutExpired:
                 p.kill()
 
