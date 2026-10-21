@@ -51,6 +51,8 @@ from camagent import config
 c = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 c["platform"].update(camera_id="pi_0001")
 c["stream"].update(encoder="v4l2m2m")
+assert V.Versions(c).method is None                     # a Pi's engine doesn't make versions unless asked (0.14.10)
+c["stream"].update(pi_engine_versions=True)
 v = V.Versions(c)
 assert v.method == "v4l2m2m"
 v.wanted = json.dumps([[], None]); v.keep_until = time.time() + 600

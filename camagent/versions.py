@@ -157,13 +157,17 @@ class Versions:
         mode = s.get("versions", "auto")
         if mode == "off":
             self.checked = True
-        elif s.get("encoder") in GPU_METHODS:
+        elif s.get("encoder") in GPU_METHODS and self._engine_ok(s["encoder"]):
             self.method, self.checked = s["encoder"], True
         elif mode == "cpu":                        # a strong CPU, no GPU: allowed on purpose
             self.method, self.checked = "x264", True
 
     # ---------- the check's result, kept across restarts (so the first viewer after one isn't left waiting) ----------
     CHECK_DAYS = 30
+
+    def _engine_ok(self, method):
+        """May this engine make versions? Not a Raspberry Pi's unless asked (see _find_method)."""
+        return not (method or "").startswith("v4l2m2m") or bool(self.cfg["stream"].get("pi_engine_versions", False))
 
     def _check_file(self):
         return status_path().with_name(f"versions-check-{self._cid}.json")
@@ -183,7 +187,8 @@ class Versions:
             return
         keep_s = self.CHECK_DAYS * 86400 if saved.get("method") else FAILED_CHECK_S   # a "no" is checked again sooner
         if (saved.get("ffmpeg") == self._ffmpeg_id() and time.time() - saved.get("at", 0) < keep_s
-                and (saved.get("method") in GPU_METHODS or saved.get("method") is None)):
+                and (saved.get("method") in GPU_METHODS or saved.get("method") is None)
+                and self._engine_ok(saved.get("method"))):
             self.method, self.checked = saved.get("method"), True
 
     def _save_check(self):
@@ -203,7 +208,13 @@ class Versions:
             ffmpeg = find_ffmpeg(s.get("ffmpeg", ""))
             if not ffmpeg:
                 return
-            results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
+            methods = [m for m in convert.candidates() if m in GPU_METHODS]
+            if not s.get("pi_engine_versions", False):
+                # A Raspberry Pi's video engine (bcm2835-codec) can wedge mid-stream making two versions at once;
+                # its ffmpeg then can't be killed, so camagent can't restart and the camera's own stream stays down
+                # until a reboot (2026-10-21, Pi 3B). The server makes them unless [stream] pi_engine_versions = true.
+                methods = [m for m in methods if not m.startswith("v4l2m2m")]
+            results = convert.detect(ffmpeg, methods=methods,
                                      size="1920x1080",         # what cameras send (YonderView takes 1080p)
                                      timeout=20)               # a 2 s clip: a working engine needs well under 10 s
             self.method = next((m for m, speed in results if speed), None)
