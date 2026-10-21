@@ -23,6 +23,9 @@ from . import convert
 from .camera import find_ffmpeg
 from .config import redact, rtsp_with_auth, scrub, srt_url
 
+# ffmpeg lines that aren't problems (it corrects the timestamps itself); kept out of the error shown on the website
+HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time")
+
 GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "v4l2m2m", "v4l2m2m-lite",
                "rkmpp")
 MAX_FAST_FAILS = 3          # ffmpeg dying this many times within FAST_S of starting: give up (the server takes over)
@@ -275,9 +278,13 @@ class Versions:
     def _read_errors(self, proc):
         for line in proc.stderr:
             line = scrub(line.rstrip())
-            if line:
-                self.error = line[-200:]
-                self.log.warning("versions ffmpeg: %s", line)
+            if not line:
+                continue
+            if any(w in line for w in HARMLESS):         # timestamp notes ffmpeg fixes itself: not a problem
+                self.log.debug("versions ffmpeg: %s", line)
+                continue
+            self.error = line[-200:]
+            self.log.warning("versions ffmpeg: %s", line)
 
     def _kill(self):
         p, self.proc = self.proc, None
