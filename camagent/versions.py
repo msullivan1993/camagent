@@ -36,6 +36,7 @@ SLOW_SPEED = 0.9            # slower than this (x real time)...
 SLOW_FOR_S = 30             # ...for this long, after WARMUP_S: this PC can't keep up; give up, the server takes over
 WARMUP_S = 15
 RETRY_AFTER_S = 3600        # after giving up, offer again this much later
+STUCK_S = 45                # running but no new frame this long: the video engine stopped responding
 
 
 def encoder(method):
@@ -303,6 +304,7 @@ class Versions:
                       convert.LABELS.get(self.method, self.method), redact(outputs[0]["url"]))
         cmd[1:1] = ["-progress", "pipe:1", "-nostats"]       # its speed, to notice a PC that can't keep up
         self.started, self.speed, self.slow_since = time.time(), None, None
+        self.frames, self.frame_at = 0, time.time()
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir())
         threading.Thread(target=self._read_errors, args=(self.proc,), daemon=True).start()
@@ -310,6 +312,13 @@ class Versions:
 
     def _read_progress(self, proc):
         for line in proc.stdout:
+            if line.startswith("frame="):
+                try:
+                    n = int(line.split("=", 1)[1].strip() or 0)
+                except ValueError:
+                    n = 0
+                if n > self.frames:
+                    self.frames, self.frame_at = n, time.time()
             if line.startswith("speed="):
                 try:
                     self.speed = float(line.split("=", 1)[1].strip().rstrip("x"))
@@ -346,6 +355,15 @@ class Versions:
                     self.wanted = None
                     self._kill()
                     self.log.info("versions stopped (the website stopped asking)")
+                    continue
+                if self.running() and time.time() - getattr(self, "frame_at", time.time()) > STUCK_S:
+                    # ffmpeg is connected but nothing comes out: a Raspberry Pi's engine left hung by an earlier
+                    # interrupted run does this until the computer restarts. Say so; the server covers meanwhile.
+                    self.error = ("the video engine stopped responding (restarting this computer usually fixes "
+                                  "it); the server makes the lower qualities meanwhile")
+                    self.log.warning("versions: no new frame for %ss; %s", STUCK_S, self.error)
+                    self.gave_up, self.wanted = time.time(), None
+                    self._kill()
                     continue
                 if self.running() and time.time() - self.started > WARMUP_S and self.speed is not None:
                     if self.speed >= SLOW_SPEED:
