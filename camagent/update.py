@@ -88,7 +88,7 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
 
     if not auto:
         ref = ref or cfg["update"].get("ref") or latest_release(repo) or "main"
-        print(f"Updating camagent {__version__} from {repo} ({ref})")
+        print(f"Updating from camagent {__version__} to the newest on {ref} ({repo})...")
         print(f"Installed: {_install(repo, ref)}")
         _refresh_unit(config_path)
         service.restart()

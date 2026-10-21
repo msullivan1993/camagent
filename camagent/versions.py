@@ -14,6 +14,7 @@ GPU), "cpu" (also without one: x264, for strong CPUs) or "off"."""
 import json
 import logging
 import os
+import platform
 import subprocess
 import tempfile
 import threading
@@ -60,7 +61,9 @@ def encoder(method):
         return [], ["-c:v", "h264_v4l2m2m"], "format=yuv420p"
     if base == "rkmpp":
         return [], ["-c:v", "h264_rkmpp", "-rc_mode", "CBR"], "format=nv12"
-    return [], ["-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency"], "format=yuv420p"
+    # small ARM boards (Raspberry Pi, Rockchip) need x264's fastest preset to keep up at all
+    preset = "ultrafast" if platform.machine().lower() in convert.ARM else "veryfast"
+    return [], ["-c:v", "libx264", "-preset", preset, "-tune", "zerolatency"], "format=yuv420p"
 
 
 def _mark_filters(f1, f2, every, chars):
