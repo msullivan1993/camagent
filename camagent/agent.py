@@ -452,5 +452,13 @@ class Supervisor:
         threads = [threading.Thread(target=a.shutdown, daemon=True) for a in self.agents]
         for t in threads:
             t.start()
+        deadline = time.time() + 15                # everyone together, not 10 s each
         for t in threads:
-            t.join(10)
+            t.join(max(0.1, deadline - time.time()))
+        if any(t.is_alive() for t in threads) or any(t.is_alive() and not t.daemon for t in threading.enumerate()
+                                                    if t is not threading.current_thread()):
+            # something is still waiting (e.g. ffmpeg stuck in a Raspberry Pi's video driver can't be stopped):
+            # leave anyway, so a restart never hangs on us; systemd cleans up what's left
+            log.warning("some parts didn't stop in time; exiting anyway")
+            logging.shutdown()
+            os._exit(0)
