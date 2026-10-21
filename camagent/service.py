@@ -41,6 +41,18 @@ def _linux_unit(config_path) -> str:
         import pwd
         pwd.getpwnam("camagent")
         user = "User=camagent\n"
+        # The video engines (Raspberry Pi /dev/video10-12, Rockchip and Intel /dev/dri, /dev/mpp_service) are open
+        # only to these groups; without them the encoder check fails and the server makes the lower qualities.
+        import grp
+        groups = []
+        for g in ("video", "render"):
+            try:
+                grp.getgrnam(g)
+                groups.append(g)
+            except KeyError:
+                pass
+        if groups:
+            user += f"SupplementaryGroups={' '.join(groups)}\n"
     except (KeyError, ImportError):
         user = ""
     return f"""[Unit]
