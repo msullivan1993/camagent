@@ -43,41 +43,74 @@ _PROBE = """<?xml version="1.0" encoding="UTF-8"?>
 </e:Envelope>"""
 
 
-def discover(timeout: float = 3.0) -> list:
-    """Send an ONVIF WS-Discovery probe and collect responding cameras."""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-    sock.settimeout(0.5)
+def _local_ipv4():
+    """This computer's IPv4 addresses (every network adapter), so the search goes out on each of them. Windows with
+    WSL, Hyper-V or a VPN has extra adapters, and a single probe often leaves on one with no cameras behind it."""
+    addrs = set()
     try:
-        sock.sendto(_PROBE.format(id=uuid.uuid4()).encode(), ("239.255.255.250", 3702))
-        found, deadline = {}, time.time() + timeout
-        while time.time() < deadline:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            addrs.add(info[4][0])
+    except OSError:
+        pass
+    try:                                           # the adapter with the default route (no packet is sent)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("192.0.2.1", 9))
+        addrs.add(s.getsockname()[0])
+        s.close()
+    except OSError:
+        pass
+    return sorted(a for a in addrs if not a.startswith(("127.", "169.254.", "0.")))
+
+
+def _parse_probe_match(text, addr):
+    xaddrs = re.search(r"XAddrs>\s*([^<]+)<", text)
+    scopes = re.search(r"Scopes>\s*([^<]+)<", text)
+    urls = (xaddrs.group(1).split() if xaddrs else [])
+    # prefer the address the reply actually came from
+    url = next((x for x in urls if addr in x), urls[0] if urls else f"http://{addr}/onvif/device_service")
+    u = urlparse(url)
+    scope_text = scopes.group(1) if scopes else ""
+
+    def scope(name):
+        m = re.search(rf"onvif://www\.onvif\.org/{name}/(\S+)", scope_text)
+        return unquote(m.group(1)) if m else ""
+
+    return {"host": addr, "port": u.port or 80, "name": scope("name"), "hardware": scope("hardware")}
+
+
+def discover(timeout: float = 3.0) -> list:
+    """Send an ONVIF WS-Discovery probe on every network adapter and collect the cameras that answer."""
+    import select
+    socks = []
+    for local in _local_ipv4() or ["0.0.0.0"]:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+            if local != "0.0.0.0":
+                sock.bind((local, 0))
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton(local))
+            sock.setblocking(False)
+            sock.sendto(_PROBE.format(id=uuid.uuid4()).encode(), ("239.255.255.250", 3702))
+            socks.append(sock)
+        except OSError:
             try:
-                data, (addr, _) = sock.recvfrom(65535)
-            except socket.timeout:
-                continue
-            text = data.decode("utf-8", "ignore")
-            xaddrs = re.search(r"XAddrs>\s*([^<]+)<", text)
-            scopes = re.search(r"Scopes>\s*([^<]+)<", text)
-            urls = (xaddrs.group(1).split() if xaddrs else [])
-            # prefer the address the reply actually came from
-            url = next((x for x in urls if addr in x), urls[0] if urls else f"http://{addr}/onvif/device_service")
-            u = urlparse(url)
-            scope_text = scopes.group(1) if scopes else ""
-
-            def scope(name):
-                m = re.search(rf"onvif://www\.onvif\.org/{name}/(\S+)", scope_text)
-                return unquote(m.group(1)) if m else ""
-
-            found[addr] = {
-                "host": addr,
-                "port": u.port or 80,
-                "name": scope("name"),
-                "hardware": scope("hardware"),
-            }
+                sock.close()
+            except Exception:  # noqa: BLE001
+                pass
+    try:
+        found, deadline = {}, time.time() + timeout
+        while socks and time.time() < deadline:
+            ready, _, _ = select.select(socks, [], [], max(0.05, min(0.5, deadline - time.time())))
+            for sock in ready:
+                try:
+                    data, (addr, _) = sock.recvfrom(65535)
+                except OSError:
+                    continue
+                found[addr] = _parse_probe_match(data.decode("utf-8", "ignore"), addr)
         return sorted(found.values(), key=lambda c: tuple(int(p) for p in c["host"].split(".") if p.isdigit()))
     finally:
-        sock.close()
+        for sock in socks:
+            sock.close()
 
 
 # ---------- ONVIF ----------
