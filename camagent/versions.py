@@ -164,8 +164,12 @@ class Versions:
             self.method = next((m for m, speed in results if speed), None)
             if self.method:
                 self.log.info("this PC can make lower-quality versions (%s)", convert.LABELS.get(self.method))
+            else:
+                why = "; ".join(f"{convert.LABELS.get(m, m)}: {convert.LAST_ERRORS.get(m, 'no answer')}"
+                                for m, _ in results) or "no video engine to try on this computer"
+                self.log.warning("this PC can't make lower-quality versions, so the server makes them (%s)", why)
         except Exception as e:  # noqa: BLE001  -- no GPU method: the server makes them
-            self.log.debug("versions check failed: %s", e)
+            self.log.warning("the check for making lower-quality versions failed: %s", e)
         finally:
             self.checked, self._checking = True, False
 

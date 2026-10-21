@@ -67,6 +67,18 @@ def _verify(version, streaming_before, wait=VERIFY_SECONDS):
     return False
 
 
+def _refresh_unit(config_path=None):
+    """Rewrite the service unit with the version just installed. This process is still the old version, so its
+    own service.refresh_unit would write the old unit (0.14.2's video group only arrived one update later)."""
+    import subprocess
+    import sys
+    code = "import sys; from camagent import service; service.refresh_unit(sys.argv[1] or None)"
+    r = subprocess.run([sys.executable, "-c", code, str(config_path or "")], capture_output=True, text=True,
+                       timeout=60)
+    if r.returncode:
+        service.refresh_unit(config_path)          # the new version couldn't start: keep the old unit current
+
+
 def run(config_path=None, ref=None, auto=False, jitter=0):
     service._require_admin()
     cfg = config.load_or_defaults(config_path)
@@ -78,7 +90,7 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
         ref = ref or cfg["update"].get("ref") or latest_release(repo) or "main"
         print(f"Updating camagent {__version__} from {repo} ({ref})")
         print(f"Installed: {_install(repo, ref)}")
-        service.refresh_unit(config_path)
+        _refresh_unit(config_path)
         service.restart()
         # computers set up before automatic updates existed get them now (on by default; off in the menu)
         if cfg["update"].get("auto", True) and service.is_installed() and not service.update_schedule_installed():
@@ -101,7 +113,7 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
     _log(f"updating {previous} -> {tag}")
     try:
         _install(repo, tag)
-        service.refresh_unit(config_path)
+        _refresh_unit(config_path)
         service.restart()
     except Exception as e:  # noqa: BLE001
         _log(f"install of {tag} failed: {e}; staying on {previous}")
@@ -112,7 +124,7 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
     _log(f"{tag} didn't come up healthy within {VERIFY_SECONDS}s; rolling back to {previous}")
     try:
         _install(repo, f"v{previous}")
-        service.refresh_unit(config_path)
+        _refresh_unit(config_path)
         service.restart()
         _log(f"rolled back to {previous}" + (" and it's streaming again" if _verify(previous, before) else
                                              "; check the cameras (camagent doctor)"))

@@ -99,6 +99,9 @@ def _test_clip(ffmpeg, folder, size="3840x2160"):
     return clip
 
 
+LAST_ERRORS = {}          # method -> ffmpeg's last error line from the most recent try_method (for the log)
+
+
 def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60):
     """Convert the test clip with one method. Returns its speed (x real time), or None if it doesn't work here."""
     before, after = args(method)
@@ -107,10 +110,15 @@ def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60):
     t0 = time.monotonic()
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as e:
+        LAST_ERRORS[method] = str(e)
         return None
     elapsed = max(0.05, time.monotonic() - t0)
-    return round(seconds / elapsed, 1) if r.returncode == 0 else None
+    if r.returncode != 0:
+        lines = [ln.strip() for ln in (r.stderr or "").splitlines() if ln.strip()]
+        LAST_ERRORS[method] = lines[-1] if lines else f"ffmpeg exited with {r.returncode}"
+        return None
+    return round(seconds / elapsed, 1)
 
 
 def detect(ffmpeg, methods=None, show=None, size="3840x2160"):
