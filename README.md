@@ -2,6 +2,8 @@
 
 CamAgent sends your camera to [YonderView](https://yonderview.net). Install it on a computer that's on
 the same network as the camera (a Windows PC, a mini PC or a Raspberry Pi) and leave that computer on.
+A mini PC with an Intel graphics chip is best: it can also make the camera's lower qualities (720p, 480p),
+which saves YonderView's server the work. A Raspberry Pi sends the camera's own video only.
 
 ## First-time setup (about 10 minutes)
 
@@ -234,9 +236,13 @@ versions = "cpu"      # also without a GPU (x264): only for strong CPUs
 versions = "off"      # never
 ```
 
-**Raspberry Pi and Rockchip boards (0.14).** On a Raspberry Pi 3 or 4, camagent uses the Pi's own video engine
-(`h264_v4l2m2m`, up to 1080p; Raspberry Pi OS's ffmpeg has it). It decodes the camera there too, so the camera itself must be 1080p (or smaller), up to about 30 fps. A Pi 4 should make a 1080p30 camera's 720p and 480p comfortably; a Pi 3 is tighter, and its CPU can't take over the decoding. If a Pi can't keep up, camagent hands the versions back to the server by itself. The Pi 5 has no video encoder, so it would need
-`versions = "cpu"`. Rockchip boards (e.g. Radxa Rock) work with an ffmpeg built with Rockchip MPP (`h264_rkmpp`, from
-the ffmpeg-rockchip packages); with the stock Debian ffmpeg the check finds nothing and the server keeps making the
-versions. The same engines also convert H.265 cameras to H.264.
+**Raspberry Pi: the camera's own video only.** A Raspberry Pi sends the camera's stream; YonderView's server
+makes the 720p and 480p. On a Pi 3B (tested 2026-10-21) making them failed both ways: its video engine
+(`h264_v4l2m2m`) wedged mid-stream, leaving an ffmpeg that even SIGKILL can't stop, so the camera's own stream
+stayed down until a forced reboot (`sudo reboot -f`); its CPU only just kept up (0.99x real time) with corrupt
+frames. So camagent doesn't try on a Pi, and tells the website why. For hosts who want their computer to make the
+lower qualities, recommend a mini PC with an Intel graphics chip (Quick Sync). To experiment anyway: `[stream]
+pi_engine_versions = true` (the engine) or `versions = "cpu"` (x264, ultrafast). Rockchip boards (e.g. Radxa Rock)
+work with an ffmpeg built with Rockchip MPP (`h264_rkmpp`, from the ffmpeg-rockchip packages); with the stock Debian
+ffmpeg the check finds nothing and the server keeps making the versions. Untested on real hardware yet.
 

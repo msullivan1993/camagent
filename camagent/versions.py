@@ -160,6 +160,12 @@ class Versions:
         mode = s.get("versions", "auto")
         if mode == "off":
             self.checked = True
+        elif mode != "cpu" and convert.raspberry_pi() and not s.get("pi_engine_versions", False):
+            # A Raspberry Pi sends the camera's own video only; YonderView's server makes the lower qualities.
+            # Tested on a Pi 3B (2026-10-21): its video engine wedged (taking the camera's stream down until a
+            # reboot) and its CPU only just kept up with corrupt frames. versions = "cpu" still tries on purpose.
+            self.checked = True
+            self.error = "a Raspberry Pi sends the camera's own video; YonderView's server makes the lower qualities"
         elif s.get("encoder") in GPU_METHODS and self._engine_ok(s["encoder"]):
             self.method, self.checked = s["encoder"], True
         elif mode == "cpu":                        # a strong CPU, no GPU: allowed on purpose

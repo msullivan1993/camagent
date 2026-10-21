@@ -34,6 +34,16 @@ VAAPI_DEVICE = "/dev/dri/renderD128"
 ARM = ("aarch64", "arm64", "armv7l", "armv8l")
 
 
+def raspberry_pi():
+    """The Raspberry Pi model ("Raspberry Pi 3 Model B Rev 1.2"), or "" on anything else."""
+    try:
+        with open("/proc/device-tree/model", encoding="utf-8", errors="replace") as f:
+            model = f.read().strip("\x00 \n")
+    except OSError:
+        return ""
+    return model if model.startswith("Raspberry Pi") else ""
+
+
 def candidates():
     """Methods to try on this platform, best first."""
     if os.name == "nt":
