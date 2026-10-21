@@ -103,7 +103,10 @@ def args(ffmpeg, method, src, outputs, mark_files=None, mark=None, audio=False, 
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "warning"]
     if wallclock:
         cmd += ["-use_wallclock_as_timestamps", "1"]
-    cmd += ["-rtsp_transport", "tcp", *pre, "-i", src, "-filter_complex", ";".join(graph)]
+    # The camera's stream is known (the uplink reads it all the time): probe it for 2 s, not ffmpeg's default 5,
+    # so the versions reach the server before it gives up waiting (a Pi 3B took ~11 s to start with the default).
+    cmd += ["-rtsp_transport", "tcp", "-analyzeduration", "2000000", "-probesize", "2000000", *pre,
+            "-i", src, "-filter_complex", ";".join(graph)]
     for i, o in enumerate(outputs):
         k = int(o["kbps"])
         cmd += ["-map", f"[o{i}]"]
