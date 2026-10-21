@@ -24,6 +24,8 @@ from .camera import find_ffmpeg
 from .config import redact, rtsp_with_auth, scrub, srt_url, status_path
 
 # ffmpeg lines that aren't problems (it corrects the timestamps itself); kept out of the error shown on the website
+FAILED_CHECK_S = 6 * 3600     # how long a failed versions check is believed
+
 HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time")
 
 GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "v4l2m2m", "v4l2m2m-lite",
@@ -178,7 +180,8 @@ class Versions:
                 saved = json.load(f)
         except (OSError, ValueError):
             return
-        if (saved.get("ffmpeg") == self._ffmpeg_id() and time.time() - saved.get("at", 0) < self.CHECK_DAYS * 86400
+        keep_s = self.CHECK_DAYS * 86400 if saved.get("method") else FAILED_CHECK_S   # a "no" is checked again sooner
+        if (saved.get("ffmpeg") == self._ffmpeg_id() and time.time() - saved.get("at", 0) < keep_s
                 and (saved.get("method") in GPU_METHODS or saved.get("method") is None)):
             self.method, self.checked = saved.get("method"), True
 
@@ -209,7 +212,9 @@ class Versions:
                 why = "; ".join(f"{convert.LABELS.get(m, m)}: {convert.LAST_ERRORS.get(m, 'no answer')}"
                                 for m, _ in results) or "no video engine to try on this computer"
                 self.log.warning("this PC can't make lower-quality versions, so the server makes them (%s)", why)
-            self._save_check()
+            timed_out = any("timed out" in str(convert.LAST_ERRORS.get(m, "")) for m, _ in results)
+            if self.method or not timed_out:       # a hung engine (fixed by a reboot) isn't a lasting "no"
+                self._save_check()
         except Exception as e:  # noqa: BLE001  -- no GPU method: the server makes them
             self.log.warning("the check for making lower-quality versions failed: %s", e)
         finally:
