@@ -336,6 +336,7 @@ def _from_account(cfg, main_path=None):
         return False
     print("Which camera is this?")
     pick = choose(cams, lambda c: (f"{c['name']}" + (f" ({c['place']})" if c.get("place") else "")
+                                   + (f"  - {c['org']}" if c.get("org") else "")
                                    + f"  [{c['slug']}]" + ("" if c.get("enabled", True) else "  (disabled)")),
                   allow_none_text="None of these: paste a settings block instead")
     if not pick:
