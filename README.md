@@ -51,11 +51,34 @@ $env:CAMAGENT_REPO = "https://TOKEN@github.com/msullivan1993/camagent.git"
 
 ## The menu
 
-Run `camagent` on its own (or the **camagent** Start menu shortcut on Windows) for a menu with
-everything: show cameras and status, add a camera, check everything, and short groups for changing or
-removing a camera, the service and its log, updates, your YonderView sign-in, and more tools (finding
-cameras on the network, what a camera supports, fixing its stream). On Windows it
-asks for administrator rights itself. The commands below still work for scripts and remote use.
+Run `camagent` on its own (or the **CamAgent** Start menu shortcut on Windows) for a menu with
+everything, grouped by what you're doing:
+
+```
+=== CamAgent 0.13.1 ===
+1 camera  |  CamAgent is running  |  YonderView: signed in as Mike
+
+ Cameras
+  1. See my cameras and how they're doing
+  2. Add a camera
+  3. Change or remove a camera...
+
+ If something's wrong
+  4. Check for problems
+  5. Restart CamAgent
+  6. Show the recent log
+
+ Settings
+  7. Sign out of YonderView
+  8. Updates...
+  9. Advanced tools...
+
+  0. Quit
+```
+
+The line under the title says what to do next when something's missing (no cameras yet, CamAgent not
+started). On Windows it asks for administrator rights itself. The commands below still work for scripts
+and remote use.
 
 ## Setup
 
@@ -155,8 +178,8 @@ Upgrading from 0.1.x: the existing camera keeps working as is. The first time it
 
 ## Troubleshooting
 
-Run `camagent doctor` first (as administrator, or with `sudo` on Linux). It checks every
-piece the agent depends on and says what to do about anything that fails.
+Open CamAgent and choose **Check for problems** (or run `camagent doctor` as administrator, or with `sudo`
+on Linux). It checks every piece CamAgent depends on and says what to do about anything that fails.
 
 ## Files
 

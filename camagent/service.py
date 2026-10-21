@@ -119,13 +119,13 @@ def install(config_path=None):
         else:
             _run([exe, "install"])
         _run([exe, "start"])
-        print(f"Service installed. Logs: {base_dir() / 'logs'}")
+        print(f"CamAgent now runs in the background and starts with the computer. Logs: {base_dir() / 'logs'}")
     else:
         UNIT_PATH.write_text(_linux_unit(config_path), encoding="utf-8")
         _run(["systemctl", "daemon-reload"])
         _run(["systemctl", "enable", SERVICE])
         _run(["systemctl", "restart", SERVICE])
-        print("Service installed. Logs: journalctl -u camagent -f")
+        print("CamAgent now runs in the background and starts with the computer. Logs: journalctl -u camagent -f")
     from .config import load_or_defaults
     if load_or_defaults(config_path)["update"].get("auto", True) and not update_schedule_installed():
         install_update_schedule(config_path)
@@ -144,7 +144,7 @@ def uninstall():
         _run(["systemctl", "daemon-reload"], check=False)
     if update_schedule_installed():
         remove_update_schedule()
-    print("Service removed.")
+    print("CamAgent no longer runs in the background.")
 
 
 def is_installed() -> bool:
@@ -165,7 +165,7 @@ def refresh_unit(config_path=None):
 def restart():
     _require_admin()
     if not is_installed():
-        print("Service isn't installed; nothing to restart.")
+        print('CamAgent isn\'t running in the background yet. Open CamAgent and choose "Start CamAgent".')
         return
     if os.name == "nt":
         exe, _ = _win_paths()

@@ -40,7 +40,7 @@ def choose(items, label, allow_none_text=None):
             return None
         if v.isdigit() and 1 <= int(v) <= len(items):
             return items[int(v) - 1]
-        print("  Not a valid choice.")
+        print(f"  Please type a number from 1 to {len(items)}" + (", or 0." if allow_none_text else "."))
 
 
 def _fix_stream(cam, max_height=1080):
@@ -73,9 +73,9 @@ def heading(text):
 
 def step_find_camera(cfg):
     cam = cfg["camera"]
-    heading("Camera")
+    heading("Step 1 of 4: Your camera")
     guide.show(guide.CAMERA)
-    if yes("Search the network for ONVIF cameras?", default=not cam["host"]):
+    if yes("Search the network for cameras?", default=not cam["host"]):
         print("Searching (3 seconds)...")
         try:
             found = camera.discover()
@@ -88,10 +88,10 @@ def step_find_camera(cfg):
             if pick:
                 cam["host"], cam["onvif_port"] = pick["host"], pick["port"]
         else:
-            print("  No ONVIF cameras answered. Check that ONVIF is enabled on the camera,")
-            print("  and that this computer is on the same network. You can still enter the address.")
+            print("  No cameras answered. Check that the camera is on, on the same network as this computer,")
+            print("  and has ONVIF turned on. You can still type its address below.")
     cam["host"] = ask("Camera IP address", cam["host"])
-    cam["onvif_port"] = int(ask("ONVIF port", cam["onvif_port"]))
+    cam["onvif_port"] = int(ask("Camera's ONVIF port (80 for most; Reolink 8000)", cam["onvif_port"]))
     cam["username"] = ask("Camera username", cam["username"])
     cam["password"] = ask_secret("Camera password", cam["password"])
 
@@ -116,20 +116,20 @@ NO_ONVIF = "Continue without ONVIF (find the stream another way; PTZ will be off
 def step_pick_stream(cfg, ffprobe):
     """Returns False if the user wants to go back and re-enter the camera's details."""
     cam = cfg["camera"]
-    heading("Stream")
+    heading("Step 2 of 4: The camera's video")
     guide.show(guide.STREAM)
-    print("Asking the camera for its streams over ONVIF...")
+    print("Asking the camera for its video...")
     try:
         info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
     except Exception as e:
         info = None
         msg = camera.friendly_error(e)
-        print(f"  ONVIF didn't work: {msg}")
+        print(f"  That didn't work: {msg}")
         if "login rejected" in msg:
             print("  Many cameras need a separate ONVIF user, created in the camera's own web page.")
             guide.show(guide.ONVIF_USERS)
         else:
-            print("  (Common causes: wrong IP or ONVIF port, ONVIF turned off, or the camera's clock is off.)")
+            print("  Usually: a wrong IP address or port, or ONVIF is turned off in the camera's settings.")
             guide.show(guide.ONVIF_USERS)
         if choose([RETRY_CAMERA, NO_ONVIF], str) == RETRY_CAMERA:
             return False
@@ -139,7 +139,7 @@ def step_pick_stream(cfg, ffprobe):
         profiles = [p for p in info["profiles"] if p["rtsp_url"]]
         profiles.sort(key=lambda p: not _is_h264(p["encoding"]))      # browser-friendly streams first
         if profiles:
-            print("Which stream should be sent? (Pick an H.264 one: browsers can't play the others.)")
+            print("Which video should be sent? (Pick an H.264 one: browsers can't play the others.)")
             pick = choose(profiles, lambda p: (
                 f"{p['name']}: {p['encoding'] or '?'} {p['width']}x{p['height']}"
                 f"{' @ ' + str(p['fps']) + ' fps' if p['fps'] else ''}"
@@ -151,15 +151,15 @@ def step_pick_stream(cfg, ffprobe):
             has_ptz = any(p["ptz"] for p in info["profiles"])
             ptz_profile = next((p["token"] for p in info["profiles"] if p["ptz"]), "")
             if has_ptz:
-                cam["ptz"] = yes("This camera supports PTZ. Enable PTZ control?", default=True)
+                cam["ptz"] = yes("This camera can pan, tilt and zoom (PTZ). Let YonderView control it?", default=True)
                 cam["ptz_profile"] = ptz_profile if cam["ptz"] else ""
             else:
-                print("  No PTZ found on this camera; PTZ control will be off.")
+                print("  This camera can't pan, tilt or zoom, so camera controls stay off.")
                 cam["ptz"], cam["ptz_profile"] = False, ""
             if pick:
                 return True
 
-    if ffprobe and yes("Try common RTSP addresses for popular camera brands?", default=True):
+    if ffprobe and yes("Try the usual video addresses for popular camera brands?", default=True):
         def progress(vendor, path):
             print(f"  trying {vendor:<18} {path}")
         found = camera.scan_rtsp_paths(ffprobe, cam["host"], cam["username"], cam["password"], progress=progress)
@@ -172,12 +172,12 @@ def step_pick_stream(cfg, ffprobe):
                     cam["ptz"] = False
                 return True
         else:
-            print("  None of the common addresses answered.")
+            print("  None of the usual addresses worked.")
 
     guide.show(guide.RTSP_PATHS)
-    cam["rtsp_url"] = config.strip_auth(ask("RTSP URL (credentials are added automatically)", cam["rtsp_url"]))
+    cam["rtsp_url"] = config.strip_auth(ask("Video address, starting rtsp:// (leave out the login)", cam["rtsp_url"]))
     if not info:
-        cam["ptz"] = yes("Does this camera have PTZ (and ONVIF working)?", default=False)
+        cam["ptz"] = yes("Can this camera pan, tilt and zoom (PTZ, with ONVIF working)?", default=False)
     return True
 
 
@@ -185,19 +185,20 @@ def step_check_stream(cfg, ffprobe):
     """Returns "ok", "camera" (go back to the camera's address/login) or "stream" (pick another stream)."""
     cam, s = cfg["camera"], cfg["stream"]
     if not ffprobe:
-        print("\n(ffprobe not found, so the stream can't be checked. Install ffmpeg to enable this.)")
+        print("\n(ffmpeg isn't installed, so the video can't be checked. Install ffmpeg and run setup again to check it.)")
         return "ok"
     while True:
-        print("\nChecking the stream...")
+        print("\nChecking the video...")
         streams = camera.probe(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
         if not streams:
             print(f"  Couldn't read {config.redact(cam['rtsp_url']) if cam['rtsp_url'] else '(no RTSP URL)'}.")
-            print("  Check the URL, and that the camera login is allowed to view RTSP.")
+            print("  Check the address, and that this camera login is allowed to watch the video.")
+            guide.show(guide.STREAM_DETAILS)
             other_url = "Enter a different RTSP URL"
             keep = "Keep it anyway (it won't stream until this is fixed)"
             pick = choose([other_url, RETRY_CAMERA, keep], str)
             if pick == other_url:
-                cam["rtsp_url"] = config.strip_auth(ask("RTSP URL", cam["rtsp_url"]))
+                cam["rtsp_url"] = config.strip_auth(ask("Video address (rtsp://...)", cam["rtsp_url"]))
                 continue
             return "camera" if pick == RETRY_CAMERA else "ok"
 
@@ -273,7 +274,7 @@ def account_token(main_path=None, sign_in_if_needed=True):
         return site, acct["token"], acct.get("name", "")
     if not sign_in_if_needed:
         return site, None, ""
-    print("\nSigning in links this computer to your YonderView account, so camagent can fetch your")
+    print("\nSigning in links this computer to your YonderView account, so CamAgent can fetch your")
     print("cameras' connection settings. Your password is only ever typed on the website.")
     token, name = link.sign_in(site)
     acct.update(token=token, name=name)
@@ -289,8 +290,8 @@ def sign_out(main_path=None):
         return
     main["account"].update(token="", name="")
     config.save_main(main, main_path)
-    print("Signed out on this computer. To stop its old sign-in working at all, unlink it from your profile")
-    print("on yonderview.net (camagent computers).")
+    print("Signed out on this computer. To remove it from your account completely, also unlink it on")
+    print("yonderview.net: your profile > CamAgent computers.")
 
 
 def _from_account(cfg, main_path=None):
@@ -350,12 +351,11 @@ def step_convert(cfg, ffmpeg):
     if height <= convert.TARGET_HEIGHT and not h265:
         s["convert"] = "off"
         return
-    heading("Resolution")
+    heading("Optional: making it 1080p")
     what = f"{height}p" if height else "an unknown size"
-    print(f"This camera sends {what}{' in H.265' if h265 else ''}. YonderView takes 1080p H.264 (higher resolution is")
-    print("an approved, paid option). camagent can convert it here before sending, so the camera keeps its full")
-    print("resolution for your own uses. A computer with an Intel, NVIDIA or AMD GPU does this easily (most")
-    print("mini PCs have Intel Quick Sync); otherwise the CPU does it, which needs a fairly strong one.")
+    print(f"This camera sends {what}{' in H.265' if h265 else ''}; YonderView takes 1080p H.264 (more is an approved,")
+    print("paid option). CamAgent can shrink it on this computer before sending; the camera itself keeps full")
+    print("quality. Most mini PCs do this easily with their graphics chip; otherwise the processor needs to be strong.")
     here = "Convert to 1080p H.264 on this computer (recommended)"
     source = f"Send the camera's own {what} (only if YonderView approved it for this camera)"
     camera_side = "Change the camera itself to 1080p H.264 instead (camagent can do it over ONVIF)"
@@ -390,7 +390,7 @@ def step_convert(cfg, ffmpeg):
         speed = convert.speed_on_camera(ffmpeg, url, method, s.get("bitrate_kbps"), scale=scale)
     if speed is None:
         print("  The conversion didn't work on this camera's stream. Sending it as it is for now;")
-        print("  'camagent doctor' can check again later.")
+        print('  "Check for problems" in the CamAgent menu can try again later.')
         s["convert"] = "off"
         return
     if speed >= 0.95 and room >= 1.5:
@@ -399,7 +399,7 @@ def step_convert(cfg, ffmpeg):
         why = (f"it fell behind on the camera ({speed}x real time)" if speed < 0.95
                else f"it has little spare capacity (about {room}x what this camera needs; 1.5x or more is comfortable)")
         print(f"  This computer may struggle: {why}. Video could stutter on busy scenes (rain, wind in trees).")
-        print("  A mini PC with an Intel GPU (Quick Sync) handles this easily, or change the camera itself to 1080p.")
+        print("  A mini PC with an Intel graphics chip handles this easily, or set the camera itself to 1080p.")
         if not yes("Convert here anyway?", default=False):
             s["convert"] = "off"
             return
@@ -409,7 +409,7 @@ def step_convert(cfg, ffmpeg):
 
 def step_platform(cfg, main_path=None):
     p, s = cfg["platform"], cfg["stream"]
-    heading("Server")
+    heading("Step 3 of 4: Your YonderView account")
     guide.show(guide.SERVER)
     typed = "Type the values one by one"
     how = choose([SIGN_IN, PASTE, typed], str)
@@ -428,13 +428,14 @@ def step_platform(cfg, main_path=None):
         _use_block(cfg, "\n".join(lines))
         print(f"  Read settings for camera '{p['camera_id']}'.")
     else:
-        p["camera_id"] = ask("Stream / camera ID", p["camera_id"])
-        p["ingest_host"] = ask("Ingest host", p["ingest_host"])
-        p["srt_password"] = ask_secret("SRT publish password", p["srt_password"])
-        p["srt_passphrase"] = ask_secret("SRT passphrase", p["srt_passphrase"])
-        p["mqtt_host"] = ask("MQTT host", p["mqtt_host"] or p["ingest_host"])
-        p["mqtt_password"] = ask_secret("MQTT password", p["mqtt_password"])
-    p["mqtt_port"] = int(ask("MQTT port", p["mqtt_port"]))
+        print("Copy each value from the settings block on your camera's page.")
+        p["camera_id"] = ask("Camera ID", p["camera_id"])
+        p["ingest_host"] = ask("Video server (ingest host)", p["ingest_host"])
+        p["srt_password"] = ask_secret("Video password (SRT password)", p["srt_password"])
+        p["srt_passphrase"] = ask_secret("Video encryption key (SRT passphrase)", p["srt_passphrase"])
+        p["mqtt_host"] = ask("Camera-controls server (MQTT host)", p["mqtt_host"] or p["ingest_host"])
+        p["mqtt_password"] = ask_secret("Camera-controls password (MQTT password)", p["mqtt_password"])
+    p["mqtt_port"] = int(ask("Camera-controls port (MQTT port)", p["mqtt_port"]))
 
 
 def test_mqtt(cfg):
@@ -533,13 +534,12 @@ def _finish(cam, main_path, others):
     cid = cam["platform"]["camera_id"]
     clash = next((o for o in others if o["platform"]["camera_id"] == cid), None)
     if clash and not yes(f"Camera '{cid}' is already set up on this machine. Replace its settings?", default=False):
-        raise SystemExit("Nothing saved.")
+        raise SystemExit("Cancelled. Nothing was saved.")
 
     while True:
-        heading("Testing")
-        guide.show(guide.TEST)
+        heading("Step 4 of 4: Testing the connection")
         ok, msg = test_mqtt(cam)
-        print(f"  Server login: {msg}")
+        print(f"  Signing in to YonderView's camera controls: {msg}")
         if ok:
             limit = (cam.get("_server") or {}).get("max_height")
             height = (cam.get("_measure") or {}).get("height")
@@ -573,12 +573,12 @@ def _finish(cam, main_path, others):
             continue
         if pick == anyway:
             break
-        raise SystemExit("Nothing saved.")
+        raise SystemExit("Cancelled. Nothing was saved.")
 
     if clash and Path(clash["_source"]) != Path(cam.get("_source") or ""):
         config.remove_camera(clash, main_path)
     saved = config.save_camera(cam, main_path)
-    print(f"\nSaved camera '{cid}' to {saved}")
+    print(f"\nSaved camera '{cid}'.  ({saved})")
     _apply(main_path)
     guide.show(guide.DONE)
 
@@ -586,12 +586,12 @@ def _finish(cam, main_path, others):
 def _apply(main_path):
     _ask_auto_update(main_path)
     if service.is_installed():
-        if yes("Restart the service to apply the change?", default=True):
+        if yes("Restart CamAgent to use the new settings?", default=True):
             service.restart()
-    elif yes("Install and start camagent as a service now?", default=True):
+    elif yes("Start CamAgent now, so it runs in the background and starts with the computer?", default=True):
         service.install(main_path)
     else:
-        print("Start it later with: camagent install-service   (or test it with: camagent run)")
+        print('Start it later: open CamAgent and choose "Start CamAgent".')
 
 
 def _ask_auto_update(main_path):
@@ -599,9 +599,9 @@ def _ask_auto_update(main_path):
     main = config.load_or_defaults(main_path)
     if main["update"].get("asked"):
         return
-    print("\nAutomatic updates install new camagent releases overnight (around 3 AM), check the cameras")
-    print("come back, and go back to the previous version if they don't.")
-    main["update"]["auto"] = yes("Keep camagent up to date automatically?", default=True)
+    print("\nAutomatic updates install new CamAgent versions overnight (around 3 AM), check the cameras come")
+    print("back, and return to the previous version if they don't.")
+    main["update"]["auto"] = yes("Keep CamAgent up to date automatically?", default=True)
     main["update"]["asked"] = True
     config.save_main(main, main_path)
     if not main["update"]["auto"] and service.update_schedule_installed():
@@ -645,7 +645,7 @@ def run(config_path=None, camera_id=None):
     cam = _pick(cams, camera_id)
     if cam is None:
         return add(config_path)
-    print(f"camagent setup for camera '{cam['platform']['camera_id']}'. "
+    print(f"CamAgent setup for camera '{cam['platform']['camera_id']}'. "
           "Press Enter to keep the value shown in [brackets].")
     original_id = cam["platform"]["camera_id"]
     ffmpeg, ffprobe = _tools(cam)
@@ -672,8 +672,8 @@ def add(config_path=None):
     if n == 1:
         guide.show(guide.INTRO)
     else:
-        print(f"Adding camera #{n} on this machine. Press Enter to keep the value shown in [brackets].")
-        print("You'll need this camera's IP address, its login, and its settings block from yonderview.net.")
+        print(f"Adding camera #{n} on this computer. Press Enter to keep a value shown in [brackets].")
+        print("You'll need this camera's IP address and login, and its YonderView sign-in or settings block.")
     ffmpeg, ffprobe = _tools(cam)
     _walk(cam, ffmpeg, ffprobe, main_path)
     _finish(cam, main_path, cams)
@@ -690,15 +690,15 @@ def remove(config_path=None, camera_id=None):
     if cam is None:
         return
     cid = cam["platform"]["camera_id"]
-    if not yes(f"Remove camera '{cid}' from this machine? Its settings will be deleted.", default=False):
+    if not yes(f"Remove camera '{cid}' from this computer? Its settings here will be deleted.", default=False):
         raise SystemExit("Nothing removed.")
     config.remove_camera(cam, main_path)
-    print(f"Removed '{cid}'. (It still exists on yonderview.net; this only stops sending it from here.)")
+    print(f"Removed '{cid}'. It stays on yonderview.net; this computer just stops sending it.")
     if service.is_installed() and len(cams) > 1:
-        if yes("Restart the service so it stops?", default=True):
+        if yes("Restart CamAgent so it stops sending it now?", default=True):
             service.restart()
     elif service.is_installed():
-        print("That was the last camera. Stop the service with: camagent uninstall-service")
+        print("That was the last camera. To stop CamAgent running in the background: camagent uninstall-service")
 
 
 def list_cameras(config_path=None):
@@ -719,7 +719,7 @@ def list_cameras(config_path=None):
     except (OSError, ValueError):
         pass
     if not cams:
-        print("No cameras are set up here. Add one with: camagent add")
+        print('No cameras are set up on this computer yet. Choose "Add a camera" in the menu.')
     for c in cams:
         cid = c["platform"]["camera_id"]
         where = config.strip_auth(c["camera"].get("rtsp_url", "")) or c["camera"].get("host", "")
@@ -728,7 +728,7 @@ def list_cameras(config_path=None):
               f"{'  [stream off]' if not c['stream'].get('enabled', True) else ''}")
         st = live.get(cid)
         if st is None:
-            print("    status: " + ("service not running" if not live else "not running (check its settings)"))
+            print("    status: " + ("CamAgent isn't running" if not live else "not sending (\"Check for problems\" shows why)"))
         else:
             video = (f"streaming {st['fps']:.0f} fps, {st['bitrate_kbps']:.0f} kbps" if st.get("streaming")
                      else "NOT streaming" + (f" ({st['last_error'][:80]})" if st.get("last_error") else ""))
@@ -745,7 +745,7 @@ def list_cameras(config_path=None):
         if st and st.get("declined"):
             print(f"    DECLINED by YonderView: {st['declined']}")
         if c.get("_legacy"):
-            print("    (stored in the old single-camera format; `camagent configure` will move it)")
+            print("    (saved in an older format; changing its settings will update it)")
     for p in problems:
         print(f"PROBLEM: {p}")
 
@@ -778,7 +778,7 @@ def weather_station(config_path=None, camera_id=None):
         return
     w = cam["weather"]
     heading("Weather station (beta)")
-    print("camagent can read a weather station on this network and show its conditions on the camera's page.")
+    print("CamAgent can read a weather station on this network and show its conditions on the camera's page.")
     print("Supported: Tempest, Davis WeatherLink Live, Ecowitt gateways (GW1100, GW2000 and similar).")
     if w.get("kind"):
         print(f"\nThis camera uses: {w['kind']} {w.get('host') or w.get('serial') or ''}".rstrip())

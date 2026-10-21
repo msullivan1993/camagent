@@ -86,9 +86,9 @@ def friendly_error(e) -> str:
     """Turn onvif-zeep's cryptic failures into something readable."""
     text = str(e)
     if "getroottree" in text or "Max retries" in text or "timed out" in text.lower():
-        return "no ONVIF response (camera unreachable, wrong port, or ONVIF disabled)"
+        return "the camera didn't answer (check its IP address and port, and that ONVIF is turned on)"
     if "Unauthorized" in text or "not authorized" in text.lower() or "401" in text:
-        return "login rejected (check the username/password, and that the camera's clock is correct)"
+        return "login rejected by the camera (check the username and password, and that the camera's clock is right)"
     return text
 
 

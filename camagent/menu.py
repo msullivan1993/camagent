@@ -12,15 +12,15 @@ def _elevate_or_explain() -> bool:
     if service.is_admin():
         return True
     if os.name == "nt":
-        print("camagent needs administrator rights to read and change its settings.")
+        print("CamAgent needs administrator rights to read and change its settings.")
         if input("Reopen as administrator? (Y/n): ").strip().lower() in ("", "y", "yes"):
             import ctypes
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "-m camagent", None, 1)
             if ret > 32:
                 return False                 # the new window takes over
-            print("Windows didn't allow it. Open an administrator Command Prompt and run: camagent")
+            print("Windows didn't allow it. Right-click Command Prompt, choose \"Run as administrator\", and type: camagent")
         return False
-    print("camagent needs root to read and change its settings. Run:  sudo camagent")
+    print("CamAgent needs administrator (root) rights to read and change its settings. Type:  sudo camagent")
     return False
 
 
@@ -43,7 +43,7 @@ def show_log(lines=40):
             with open(path, encoding="utf-8", errors="replace") as f:
                 tail = deque(f, maxlen=lines)
         except OSError:
-            print(f"No log yet at {path}")
+            print("No log yet: CamAgent hasn't run in the background. Choose 5 in the menu to start it.")
             return
         print(f"--- last {lines} lines of {path} ---")
         print("".join(tail).rstrip())
@@ -53,10 +53,11 @@ def show_log(lines=40):
 
 def _discover():
     from .camera import discover
-    print("Searching (3 seconds)...")
+    print("Searching the network (3 seconds)...")
     cams = discover()
     if not cams:
-        print("No ONVIF cameras answered.")
+        print("No cameras answered. Check that the camera is on, on the same network as this computer, and has")
+        print("ONVIF turned on in its settings (the standard CamAgent uses to talk to it).")
     for c in cams:
         print(f"  {c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip())
 
@@ -90,7 +91,7 @@ def reopen_if_updated(config_path=None):
     old code against new files)."""
     new = disk_version()
     if new != __version__:
-        print(f"\ncamagent was updated to {new} while this menu was open (it's running {__version__}).")
+        print(f"\nCamAgent was updated to {new} while this menu was open.")
         relaunch(config_path)
 
 
@@ -100,7 +101,7 @@ def relaunch(config_path=None):
     import subprocess
     import sys
     args = [sys.executable, "-m", "camagent"] + (["--config", str(config_path)] if config_path else [])
-    print("Reopening camagent on the new version...\n")
+    print("Reopening the menu on the new version...\n")
     sys.stdout.flush()
     if os.name == "nt":                      # Windows: run the new menu here, then leave when it closes
         raise SystemExit(subprocess.call(args))
@@ -133,33 +134,66 @@ def _do(label, action):
         if e.code not in (None, 0) and not isinstance(e.code, int):
             print(e.code)
     except (KeyboardInterrupt, EOFError):
-        print("\nCancelled.")
+        print("\nCancelled. Nothing was changed.")
     except Exception as e:  # noqa: BLE001
-        print(f"That didn't work: {e}")
+        print(f"Something went wrong: {e}")
+        print('"Check for problems" in the menu may show why.')
 
 
 def _choose(title, actions, back="Quit"):
-    """Print a numbered list; returns the chosen (label, action), or None for 0 / Enter."""
-    print(title)
-    for i, (label, _) in enumerate(actions, 1):
-        print(f"  {i}. {label}")
-    print(f"  0. {back}")
+    """Print a numbered list; returns the chosen (label, action), or None for 0 / Enter. An entry whose action is
+    None is a heading: printed, not numbered."""
+    if title:
+        print(title)
+    numbered = []
+    for label, action in actions:
+        if action is None:
+            print(f"\n {label}")
+            continue
+        numbered.append((label, action))
+        print(f"  {len(numbered)}. {label}")
+    print(f"\n  0. {back}")
     while True:
-        choice = input("Choose: ").strip()
+        choice = input("Choose a number: ").strip()
         if choice in ("0", "q", "quit", "exit", "back", "b", ""):
             return None
-        if choice.isdigit() and 1 <= int(choice) <= len(actions):
-            return actions[int(choice) - 1]
-        print("Not a valid choice.")
+        if choice.isdigit() and 1 <= int(choice) <= len(numbered):
+            return numbered[int(choice) - 1]
+        print(f"Please type a number from 1 to {len(numbered)}, or 0 to {back.lower()}.")
 
 
 def _submenu(title, actions):
     """A group of related actions: pick one (it runs), or 0 / Enter to go back."""
-    picked = _choose(f"\n--- {title} ---", actions, back="Back")
+    picked = _choose(f"\n--- {title} ---", actions, back="Go back")
     if picked:
         _do(*picked)
         return True
     return False
+
+
+def _sign_out(config_path=None):
+    from . import configure
+    if configure.yes("Sign this computer out of YonderView?", default=False):
+        configure.sign_out(config_path)
+    else:
+        print("Cancelled. Nothing was changed.")
+
+
+def _status_lines(cams, state, problems, config_path=None):
+    """The few lines above the menu: how things stand, and the one thing to do next if something's missing."""
+    running = {"running": "CamAgent is running", "stopped": "CamAgent is stopped",
+               "not installed": "CamAgent isn't running yet"}.get(state, f"CamAgent: {state}")
+    n = len(cams)
+    lines = [f"{n} camera{'s' if n != 1 else ''}  |  {running}  |  YonderView: {_account_label(config_path)}"]
+    if problems:
+        lines.append(f"! There's a problem with the settings ({len(problems)}). Choose 4 to see it.")
+    elif not cams:
+        lines.append("No cameras yet. Choose 2 to add one.")
+    elif state == "not installed":
+        lines.append("Choose 5 to start CamAgent, so it runs in the background and starts with the computer.")
+    elif state == "stopped":
+        lines.append("Choose 5 to start it again.")
+    return lines
 
 
 def run(config_path=None):
@@ -176,42 +210,40 @@ def run(config_path=None):
         installed = state != "not installed"
         signed_in = bool(config.load_or_defaults(config_path)["account"].get("token")) if not problems else False
         camera_tools = [
-            ("Change its settings", lambda: configure.run(config_path)),
-            ("Weather station (beta)", lambda: configure.weather_station(config_path)),
-            ("Remove it from this computer", lambda: configure.remove(config_path)),
-        ]
-        service_tools = [
-            ("Restart the service" if installed else "Install and start the service",
-             service.restart if installed else (lambda: service.install(config_path))),
-            ("Show the recent log", show_log),
+            ("Change a camera's settings", lambda: configure.run(config_path)),
+            ("Add or change a weather station (beta)", lambda: configure.weather_station(config_path)),
+            ("Remove a camera from this computer", lambda: configure.remove(config_path)),
         ]
         update_tools = [
-            ("Update camagent now", lambda: _update_and_relaunch(config_path)),
-            ("Automatic updates: " + ("on (turn off)" if _auto_on(config_path) else "off (turn on)"),
+            ("Update CamAgent now", lambda: _update_and_relaunch(config_path)),
+            ("Automatic nightly updates are " + ("ON: turn them off" if _auto_on(config_path) else "OFF: turn them on"),
              lambda: configure.toggle_auto_update(config_path)),
         ]
-        account_tools = [
-            ("Sign out on this computer", lambda: configure.sign_out(config_path)) if signed_in else
-            ("Sign in to YonderView", lambda: configure.account_token(config_path)),
-        ]
-        more_tools = [
-            ("Find cameras on the network", _discover),
-            ("What a camera supports (focus, day/night, wiper...)", lambda: controls.cli_probe(config_path)),
-            ("Fix a camera's stream (H.264, up to 1080p, 2 s keyframes)", lambda: controls.cli_fix_stream(config_path)),
+        advanced_tools = [
+            ("Search the network for cameras", _discover),
+            ("Show what a camera can do (focus, day/night, wiper...)", lambda: controls.cli_probe(config_path)),
+            ("Set a camera's video to what YonderView needs (H.264, up to 1080p)",
+             lambda: controls.cli_fix_stream(config_path)),
         ]
         actions = [
-            ("Show cameras and their status", lambda: configure.list_cameras(config_path)),
+            ("Cameras", None),
+            ("See my cameras and how they're doing", lambda: configure.list_cameras(config_path)),
             ("Add a camera", lambda: configure.add(config_path)),
-            ("Change a camera...  (settings, weather station, remove)", ("Change a camera", camera_tools)),
-            ("Check everything (doctor)", lambda: doctor.run(config_path)),
-            ("Service and log...", ("Service and log", service_tools)),
+            ("Change or remove a camera...", ("Change or remove a camera", camera_tools)),
+            ("If something's wrong", None),
+            ("Check for problems", lambda: doctor.run(config_path)),
+            ("Restart CamAgent" if installed else "Start CamAgent (runs in the background, starts with the computer)",
+             service.restart if installed else (lambda: service.install(config_path))),
+            ("Show the recent log", show_log),
+            ("Settings", None),
+            ("Sign out of YonderView" if signed_in else "Sign in to YonderView",
+             (lambda: _sign_out(config_path)) if signed_in else (lambda: configure.account_token(config_path))),
             ("Updates...", ("Updates", update_tools)),
-            ("YonderView account...", ("YonderView account", account_tools)),
-            ("More tools...", ("More tools", more_tools)),
+            ("Advanced tools...", ("Advanced tools", advanced_tools)),
         ]
-        print(f"\n=== camagent {__version__} ===")
-        print(f"Cameras: {len(cams)}   Service: {state}   YonderView: {_account_label(config_path)}"
-              + (f"   Problems: {len(problems)}" if problems else ""))
+        print(f"\n=== CamAgent {__version__} ===")
+        for line in _status_lines(cams, state, problems, config_path):
+            print(line)
         picked = _choose("", actions)
         if picked is None:
             return
@@ -223,6 +255,6 @@ def run(config_path=None):
         else:
             _do(label, action)
         try:
-            input("\nPress Enter to return to the menu...")
+            input("\nPress Enter to go back to the menu.")
         except (KeyboardInterrupt, EOFError):
             return
