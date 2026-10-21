@@ -154,7 +154,7 @@ def _choose(title, actions, back="Quit"):
         print(f"  {len(numbered)}. {label}")
     print(f"\n  0. {back}")
     while True:
-        choice = input("Choose a number: ").strip()
+        choice = input("Type a number and press Enter: ").strip()
         if choice in ("0", "q", "quit", "exit", "back", "b", ""):
             return None
         if choice.isdigit() and 1 <= int(choice) <= len(numbered):

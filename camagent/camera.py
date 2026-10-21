@@ -86,7 +86,7 @@ def friendly_error(e) -> str:
     """Turn onvif-zeep's cryptic failures into something readable."""
     text = str(e)
     if "getroottree" in text or "Max retries" in text or "timed out" in text.lower():
-        return "the camera didn't answer (check its IP address and port, and that ONVIF is turned on)"
+        return "the camera didn't answer (the address may be wrong, the camera may be off or on another network, or ONVIF is off)"
     if "Unauthorized" in text or "not authorized" in text.lower() or "401" in text:
         return "login rejected by the camera (check the username and password, and that the camera's clock is right)"
     return text
@@ -301,8 +301,9 @@ def stream_advice(m: dict, max_height=None):
         tips.append(f"Only {actual:g} of {fps:g} frames per second actually arrived. In low light many cameras "
                     "slow down on their own; otherwise the camera may be overloaded.")
     if gop and gop > 4:
-        tips.append(f"Keyframes come only about every {gop:g} seconds; YonderView needs one at least every 4 "
-                    "(every 2 is best). Set the camera's I-frame interval to about twice its frame rate.")
+        tips.append(f"The camera sends a full picture (keyframe) only every {gop:g} seconds; YonderView needs one at "
+                    "least every 4 (2 is best). In the camera's web page, set \"I-frame interval\" or \"keyframe "
+                    "interval\" to about twice its frame rate (e.g. 50 at 25 fps).")
     return tips
 
 

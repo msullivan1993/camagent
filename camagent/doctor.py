@@ -7,6 +7,7 @@ import sys
 from . import __version__, camera, config, service
 
 OK, WARN, FAIL = "[ OK ]", "[WARN]", "[FAIL]"
+CHANGE = "open CamAgent > Change or remove a camera > Change a camera's settings"
 
 
 class Report:
@@ -51,7 +52,7 @@ def run(config_path=None, camera_id=None):
     if v >= (3, 11):
         r.line(OK, "Python", f"{v.major}.{v.minor}.{v.micro}")
     else:
-        r.line(FAIL, "Python", f"{v.major}.{v.minor} is too old", "install Python 3.11 or newer")
+        r.line(FAIL, "Python", f"{v.major}.{v.minor} is too old", "run the CamAgent installer again; it installs a newer Python")
 
     # --- config ---
     try:
@@ -60,10 +61,10 @@ def run(config_path=None, camera_id=None):
         r.line(FAIL, "Settings file", f"can't read {path}", f"run this from {admin_hint}")
         return _summary(r)
     except Exception as e:
-        r.line(FAIL, "Settings file", f"can't read {path} ({e})", "fix the file, or set the camera up again: camagent configure")
+        r.line(FAIL, "Settings file", f"can't read {path} ({e})", "fix the file, or set the camera up again: " + CHANGE)
         return _summary(r)
     for p in problems:
-        r.line(FAIL, "Camera settings file", p, "fix or remove that file, or set the camera up again: camagent configure")
+        r.line(FAIL, "Camera settings file", p, "fix or remove that file, or set the camera up again: " + CHANGE)
     if not cams:
         r.line(FAIL, "Cameras", "none set up yet", "open CamAgent and choose Add a camera")
         return _summary(r)
@@ -128,7 +129,8 @@ def run(config_path=None, camera_id=None):
     elif state == "not installed":
         r.line(WARN, "Running in the background", "not yet", "open CamAgent and choose Start CamAgent")
     else:
-        r.line(FAIL, "Running in the background", state, "open CamAgent, choose Restart CamAgent, then Show the recent log")
+        r.line(FAIL, "Running in the background", state, "open CamAgent and choose Restart CamAgent. Still failing? Choose Show the recent log and send it "
+                   "to support (Report a problem on yonderview.net)")
 
     return _summary(r)
 
@@ -155,7 +157,7 @@ def _check_convert(r, cfg, cid):
         r.line(FAIL, "Converting to 1080p", "the CPU conversion doesn't work", "reinstall ffmpeg")
     else:
         r.line(WARN, "Converting to 1080p", f"{convert.LABELS[method]} doesn't work here any more (the service "
-               "falls back to the CPU)", f"update the graphics driver, or run camagent configure {cid} to check again")
+               "falls back to the CPU)", f"update the graphics driver, or check again: {CHANGE}")
 
 
 def _check_camera(r, cfg, ffprobe):
@@ -175,8 +177,16 @@ def _check_camera(r, cfg, ffprobe):
                 r.line(WARN, "Camera controls", "this camera doesn't offer pan/tilt/zoom (PTZ)",
                        "if it's a fixed camera, turn PTZ off: open CamAgent > Change or remove a camera > Change a camera's settings")
         except Exception as e:
-            r.line(FAIL, "Camera connection", camera.friendly_error(e),
-                   "check the camera's IP address, ONVIF port and login, and that its clock is set automatically (NTP)")
+            msg = camera.friendly_error(e)
+            if "login rejected" in msg:
+                r.line(FAIL, "Camera connection", "the camera refused the username or password",
+                       "try them in the camera's web page; some cameras need a separate ONVIF user. Also check the "
+                       f"camera's clock is set automatically (NTP). Then: {CHANGE}")
+            else:
+                r.line(FAIL, "Camera connection", msg,
+                       "check the camera is on and on this network. If your router restarted, the camera may have a "
+                       "new address: find it with Advanced tools > Search the network for cameras, then: "
+                       f"{CHANGE}")
 
     if cam.get("rtsp_url"):
         if not ffprobe:
@@ -190,20 +200,20 @@ def _check_camera(r, cfg, ffprobe):
                 if video and video.get("codec_name") != "h264" and not converting:
                     r.line(FAIL, "Video codec", f"{video.get('codec_name')}: most viewers' browsers can't play it",
                            "set this stream to H.264 in the camera's web page (and turn off 'smart codec'/H.264+), "
-                           f"or let camagent convert it (camagent configure {cid})")
+                           f"or let CamAgent convert it: {CHANGE}")
                 elif video and (video.get("height") or 0) > 1080 and not converting:
                     r.line(WARN, "Resolution", f"{video.get('height')}p is sent as it is",
-                           f"fine if YonderView approved it for this camera; otherwise let camagent convert it to "
-                           f"1080p (camagent configure {cid})")
+                           f"fine if YonderView approved it for this camera; otherwise let CamAgent convert it to "
+                           f"1080p: {CHANGE}")
             else:
                 r.line(FAIL, "Camera video", f"can't read {config.strip_auth(cam['rtsp_url'])}",
-                       f"check the RTSP URL and camera login (camagent configure {cid})")
+                       f"check the video address and camera login: {CHANGE}")
 
     if cfg["stream"].get("audio") and cam.get("rtsp_url") and ffprobe:
         url = config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])
         if camera.audio_arrives(ffprobe, url) is False:
             r.line(WARN, "Audio", "audio is on, but the camera sends no sound (the stream goes out video only)",
-                   f"turn the camera's audio on in its web page, or turn audio off: camagent configure {cid}")
+                   f"turn the camera's audio on in its web page, or turn sound off: {CHANGE}")
 
     _check_convert(r, cfg, cid)
 
@@ -241,7 +251,7 @@ def _summary(r: Report):
     print()
     if r.failures:
         print(f"Found {r.failures} problem(s)" + (f" and {r.warnings} warning(s)" if r.warnings else "")
-              + ", marked above. Fix them from the top down, then check again.")
+              + ", marked above. Fix them from the top down, then choose Check for problems again.")
         print('Stuck? Use "Report a problem" on yonderview.net and paste this list.')
     elif r.warnings:
         print(f"No problems; {r.warnings} warning(s), marked [WARN] above.")
