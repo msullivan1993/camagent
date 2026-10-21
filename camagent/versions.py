@@ -21,7 +21,7 @@ import time
 
 from . import convert
 from .camera import find_ffmpeg
-from .config import redact, rtsp_with_auth, scrub, srt_url
+from .config import redact, rtsp_with_auth, scrub, srt_url, status_path
 
 # ffmpeg lines that aren't problems (it corrects the timestamps itself); kept out of the error shown on the website
 HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time")
@@ -143,6 +143,8 @@ class Versions:
         self._stop = threading.Event()
         self._cid = cid
         self._known_method()                       # from the config only: no hardware check at startup
+        if not self.checked:
+            self._load_saved_check()               # ...or the check's result from before a restart or update
         threading.Thread(target=self._watch, daemon=True, name=f"versions-{cid}").start()
 
     # ---------- can this PC do it? ----------
@@ -156,6 +158,38 @@ class Versions:
             self.method, self.checked = s["encoder"], True
         elif mode == "cpu":                        # a strong CPU, no GPU: allowed on purpose
             self.method, self.checked = "x264", True
+
+    # ---------- the check's result, kept across restarts (so the first viewer after one isn't left waiting) ----------
+    CHECK_DAYS = 30
+
+    def _check_file(self):
+        return status_path().with_name(f"versions-check-{self._cid}.json")
+
+    def _ffmpeg_id(self):
+        ffmpeg = find_ffmpeg(self.cfg["stream"].get("ffmpeg", ""))
+        try:
+            return f"{ffmpeg}:{int(os.path.getmtime(ffmpeg))}" if ffmpeg else ""
+        except OSError:
+            return str(ffmpeg or "")
+
+    def _load_saved_check(self):
+        try:
+            with open(self._check_file(), encoding="utf-8") as f:
+                saved = json.load(f)
+        except (OSError, ValueError):
+            return
+        if (saved.get("ffmpeg") == self._ffmpeg_id() and time.time() - saved.get("at", 0) < self.CHECK_DAYS * 86400
+                and (saved.get("method") in GPU_METHODS or saved.get("method") is None)):
+            self.method, self.checked = saved.get("method"), True
+
+    def _save_check(self):
+        try:
+            path = self._check_file()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"method": self.method, "ffmpeg": self._ffmpeg_id(), "at": time.time()}),
+                            encoding="utf-8")
+        except OSError as e:
+            self.log.debug("couldn't save the versions check: %s", e)
 
     def _find_method(self):
         """The GPU check (a short test encode), run once, in the background, the first time the website asks.
@@ -174,6 +208,7 @@ class Versions:
                 why = "; ".join(f"{convert.LABELS.get(m, m)}: {convert.LAST_ERRORS.get(m, 'no answer')}"
                                 for m, _ in results) or "no video engine to try on this computer"
                 self.log.warning("this PC can't make lower-quality versions, so the server makes them (%s)", why)
+            self._save_check()
         except Exception as e:  # noqa: BLE001  -- no GPU method: the server makes them
             self.log.warning("the check for making lower-quality versions failed: %s", e)
         finally:
