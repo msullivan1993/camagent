@@ -85,9 +85,15 @@ def run(config_path=None, camera_id=None):
             first = ffmpeg
         r.line(OK, "ffmpeg", first)
         from . import prereqs
+        if not prereqs.admin_only_location(ffmpeg):
+            r.line(FAIL, "ffmpeg location", f"{ffmpeg} is in a folder normal users can change (the service runs it "
+                   "as SYSTEM)", "winget install -e --id Gyan.FFmpeg --scope machine, then run setup again")
+        if not prereqs.admin_only_location(sys.base_prefix):
+            r.line(FAIL, "Python location", f"camagent's Python ({sys.base_prefix}) is in a folder normal users "
+                   "can change", "reinstall with the current installer (it installs Python for all users)")
         if prereqs.srt_supported(ffmpeg) is False:
             r.line(FAIL, "ffmpeg SRT support", "this ffmpeg build can't send SRT",
-                   "install a full build (Windows: winget install -e --id Gyan.FFmpeg)")
+                   "install a full build (Windows: winget install -e --id Gyan.FFmpeg --scope machine)")
     else:
         r.line(FAIL, "ffmpeg", "not found", camera.ffmpeg_install_hint())
     ffprobe = camera.find_ffprobe(ffmpeg)

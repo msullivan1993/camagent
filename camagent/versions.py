@@ -91,6 +91,36 @@ def _mark_filters(f1, f2, every, chars):
     return out
 
 
+HEIGHTS = {1440, 1080, 720, 480}
+MAX_VERSIONS = 4
+
+
+def clean_request(versions, mark):
+    """The website's request, checked: only the known version heights (their path suffix is the height), sane
+    frame rates and bitrates, at most four, and a short mark. Anything else is refused, not passed to ffmpeg."""
+    if not isinstance(versions, list) or not versions or len(versions) > MAX_VERSIONS:
+        raise ValueError("bad versions request")
+    out = []
+    for v in versions:
+        if not isinstance(v, dict):
+            raise ValueError("bad versions request")
+        height = int(v.get("height") or 0)
+        if height not in HEIGHTS or str(v.get("suffix")) != str(height):
+            raise ValueError(f"unknown version {v.get('suffix')!r}")
+        o = {"suffix": str(height), "height": height}
+        if v.get("fps"):
+            o["fps"] = min(60, max(1, int(v["fps"])))
+        o["kbps"] = min(20000, max(100, int(v.get("kbps") or 0)))
+        out.append(o)
+    if mark:
+        if not isinstance(mark, dict):
+            raise ValueError("bad mark")
+        on = [str(x) for x in (mark.get("on") or []) if str(x) in {str(h) for h in HEIGHTS}]
+        mark = {"on": on, "every": min(600, max(5, int(mark.get("every") or 15))),
+                "line1": str(mark.get("line1") or "")[:80], "line2": str(mark.get("line2") or "")[:80]}
+    return out, mark or None
+
+
 def pick(versions, source_height):
     """720p and 480p always; 1080p/1440p only when what we send is bigger than that."""
     return [v for v in versions if int(v["height"]) <= 720 or (source_height and source_height > int(v["height"]))]
@@ -259,6 +289,7 @@ class Versions:
     # ---------- what the website asks ----------
     def want(self, versions, mark=None, keep_s=180):
         """Start (or keep making) these versions. Returns a short status for the website."""
+        versions, mark = clean_request(versions, mark)
         self._maybe_retry()
         if not self.checked and self.cfg["stream"].get("versions", "auto") != "off":
             if not self._checking:                 # first request: check the GPU now; the server covers this one
@@ -317,6 +348,7 @@ class Versions:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(text)
                 files.append(os.path.basename(path))       # ffmpeg runs in the temp folder: no drive letters
+            self._mark_files = files
         audio = bool(self.uplink and self.uplink.stats.get("audio") == "on")
         cmd = args(ffmpeg, self.method, rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]),
                    outputs, files, mark, audio, s.get("wallclock_timestamps", True))
@@ -365,6 +397,13 @@ class Versions:
                                                    # engine can hang until a reboot if killed mid-drain
             except subprocess.TimeoutExpired:
                 p.kill()
+        for name in getattr(self, "_mark_files", None) or []:       # the mark's text files, made per start
+            if name:
+                try:
+                    os.remove(os.path.join(tempfile.gettempdir(), name))
+                except OSError:
+                    pass
+        self._mark_files = None
 
     def _watch(self):
         while not self._stop.wait(2):

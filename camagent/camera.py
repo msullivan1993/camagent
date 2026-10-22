@@ -1,4 +1,5 @@
 """Finding cameras and their streams: ONVIF WS-Discovery, ONVIF profile lookup, RTSP probing."""
+import ipaddress
 import json
 import re
 import socket
@@ -73,9 +74,14 @@ def _parse_probe_match(text, addr):
 
     def scope(name):
         m = re.search(rf"onvif://www\.onvif\.org/{name}/(\S+)", scope_text)
-        return unquote(m.group(1)) if m else ""
+        # printable text only: a reply is untrusted, and control characters could rewrite the terminal
+        return "".join(ch for ch in unquote(m.group(1)) if ch.isprintable())[:80] if m else ""
 
-    return {"host": addr, "port": u.port or 80, "name": scope("name"), "hardware": scope("hardware")}
+    try:
+        port = u.port or 80
+    except ValueError:
+        port = 80
+    return {"host": addr, "port": port, "name": scope("name"), "hardware": scope("hardware")}
 
 
 def discover(timeout: float = 3.0) -> list:
@@ -105,6 +111,8 @@ def discover(timeout: float = 3.0) -> list:
                 try:
                     data, (addr, _) = sock.recvfrom(65535)
                 except OSError:
+                    continue
+                if not ipaddress.ip_address(addr).is_private:      # cameras answer from the local network
                     continue
                 found[addr] = _parse_probe_match(data.decode("utf-8", "ignore"), addr)
         return sorted(found.values(), key=lambda c: tuple(int(p) for p in c["host"].split(".") if p.isdigit()))

@@ -23,11 +23,27 @@ def which(name):
     return None
 
 
+def admin_only_location(path) -> bool:
+    """Windows: is this file somewhere only administrators can change (Program Files, Windows, camagent's own
+    locked folder)? The service runs ffmpeg as SYSTEM, so an ffmpeg a normal user could replace (a per-user winget
+    install under C:\\Users, or C:\\ffmpeg) would let them run anything as SYSTEM. Always True elsewhere."""
+    if not WINDOWS or not path:
+        return True
+    p = os.path.normcase(os.path.abspath(path))
+    roots = [os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", ""),
+             os.environ.get("ProgramW6432", ""), os.environ.get("SystemRoot", ""),
+             os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "camagent")]
+    return any(r and p.startswith(os.path.normcase(os.path.abspath(r)) + os.sep) for r in roots)
+
+
+_warned_unsafe = set()
+
+
 def _windows_ffmpeg_candidates():
     """ffmpeg installed by winget isn't on PATH until a new window is opened (and never for the service),
     so look where winget and common manual installs put it. Not in folders any user can create (like C:\\ffmpeg):
     whatever is found there would run as SYSTEM."""
-    roots = [os.environ.get("ProgramFiles", ""), os.environ.get("LOCALAPPDATA", "")]
+    roots = [os.environ.get("ProgramFiles", "")]                 # machine-wide installs only (see admin_only_location)
     pats = ["WinGet/Packages/Gyan.FFmpeg*/**/bin/ffmpeg.exe", "Microsoft/WinGet/Packages/Gyan.FFmpeg*/**/bin/ffmpeg.exe",
             "ffmpeg/bin/ffmpeg.exe"]
     for root in filter(None, roots):
@@ -37,13 +53,26 @@ def _windows_ffmpeg_candidates():
 
 
 def find_ffmpeg(configured=""):
+    """The ffmpeg to run. On Windows, one in an administrators-only folder is preferred over the configured or
+    PATH one when those sit where a normal user could replace them."""
+    picks = []
     if configured and Path(configured).exists():
-        return configured
+        picks.append(configured)
     found = which("ffmpeg")
     if found:
-        return found
+        picks.append(found)
     if WINDOWS:
-        return next(_windows_ffmpeg_candidates(), "")
+        picks += list(_windows_ffmpeg_candidates())
+    for p in picks:
+        if admin_only_location(p):
+            return p
+    if picks:                                   # only unsafe ones: keep the camera working, but say so
+        if picks[0] not in _warned_unsafe:
+            _warned_unsafe.add(picks[0])
+            print(f"WARNING: ffmpeg at {picks[0]} is in a folder normal users can change, and the service runs it "
+                  f"as SYSTEM. Install it for all users (winget install -e --id Gyan.FFmpeg --scope machine), "
+                  f"then run setup again.", flush=True)
+        return picks[0]
     return ""
 
 

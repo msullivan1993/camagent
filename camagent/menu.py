@@ -15,7 +15,8 @@ def _elevate_or_explain() -> bool:
         print("CamAgent needs administrator rights to read and change its settings.")
         if input("Reopen as administrator? (Y/n): ").strip().lower() in ("", "y", "yes"):
             import ctypes
-            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "-m camagent", None, 1)
+            ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "-I -m camagent",
+                                                       str(config.base_dir()), 1)
             if ret > 32:
                 return False                 # the new window takes over
             print("Windows didn't allow it. Right-click Command Prompt, choose \"Run as administrator\", and type: camagent")
@@ -67,7 +68,8 @@ def installed_version():
     import subprocess
     import sys
     try:
-        out = subprocess.run([sys.executable, "-m", "camagent", "version"], capture_output=True, text=True, timeout=30)
+        out = subprocess.run([sys.executable, "-I", "-m", "camagent", "version"], capture_output=True, text=True,
+                             timeout=30)
         return out.stdout.strip() or __version__
     except Exception:  # noqa: BLE001
         return __version__

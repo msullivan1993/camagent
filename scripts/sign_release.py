@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""Sign a camagent release (0.16+). Run on Mike's computer (WSL), never on GitHub: agents install only releases
+signed with this key, so someone who took over the GitHub account still couldn't push an update to hosts.
+
+  .venv/bin/python scripts/sign_release.py key-new          once: make the key (asks for a passphrase)
+  .venv/bin/python scripts/sign_release.py pubkey           show the public key (goes in camagent/release.py)
+  .venv/bin/python scripts/sign_release.py sign v0.16.0     after pushing the tag and the Release workflow passing
+
+`sign` builds the wheel from the tag itself (a clean copy of exactly what the tag holds), writes SHA256SUMS,
+signs it, uploads all three to the tag's draft release (gh CLI) and publishes it. The passphrase is asked each
+time. Needs `pip install build cryptography` in the venv.
+
+The key lives in ~/.config/camagent-release/release-key.pem (encrypted with the passphrase). Keep a backup of that
+file and the passphrase somewhere safe (a password manager): without it, no new update can reach hosts.
+"""
+import base64
+import getpass
+import hashlib
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+KEY = Path.home() / ".config" / "camagent-release" / "release-key.pem"
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _crypto():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    return serialization, Ed25519PrivateKey
+
+
+def _git(*args, cwd=REPO):
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _public_b64(private_key):
+    serialization, _ = _crypto()
+    raw = private_key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    return base64.b64encode(raw).decode()
+
+
+def _load():
+    serialization, _ = _crypto()
+    if not KEY.exists():
+        sys.exit(f"No release key at {KEY}. Make one first: scripts/sign_release.py key-new")
+    pw = getpass.getpass("Release key passphrase: ").encode()
+    try:
+        return serialization.load_pem_private_key(KEY.read_bytes(), password=pw)
+    except ValueError:
+        sys.exit("Wrong passphrase.")
+
+
+def key_new():
+    serialization, Ed25519PrivateKey = _crypto()
+    if KEY.exists():
+        sys.exit(f"{KEY} already exists; not replacing it.")
+    pw = getpass.getpass("New passphrase for the release key (long; keep it in your password manager): ")
+    if len(pw) < 12:
+        sys.exit("Use at least 12 characters.")
+    if getpass.getpass("Again: ") != pw:
+        sys.exit("They don't match.")
+    key = Ed25519PrivateKey.generate()
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                            serialization.BestAvailableEncryption(pw.encode()))
+    KEY.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(KEY.parent, 0o700)
+    fd = os.open(KEY, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(pem)
+    print(f"Saved {KEY} (only you can read it). Back it up, with the passphrase, somewhere safe.")
+    print(f"Public key (for camagent/release.py PUBLIC_KEYS):\n  {_public_b64(key)}")
+
+
+def sign(tag):
+    if not tag.startswith("v"):
+        sys.exit("Give the tag, e.g. v0.16.0")
+    version = tag[1:]
+    commit = _git("rev-list", "-n", "1", tag)
+    remote = _git("ls-remote", "origin", f"refs/tags/{tag}^{{}}") or _git("ls-remote", "origin", f"refs/tags/{tag}")
+    if not remote or remote.split()[0] != commit:
+        sys.exit(f"{tag} on GitHub isn't the {tag} here ({commit[:12]}). Push it (or check who moved it) first.")
+    key = _load()
+    pub = _public_b64(key)
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "src"
+        src.mkdir()
+        archive = subprocess.run(["git", "archive", tag], cwd=REPO, check=True, capture_output=True).stdout
+        subprocess.run(["tar", "-x", "-C", str(src)], input=archive, check=True)
+        code = (src / "camagent" / "__init__.py").read_text()
+        if f'__version__ = "{version}"' not in code:
+            sys.exit(f"{tag} doesn't hold camagent {version} (camagent/__init__.py).")
+        if pub not in (src / "camagent" / "release.py").read_text():
+            sys.exit(f"{tag}'s camagent/release.py doesn't list this key, so agents running it couldn't update "
+                     f"later. Add it to PUBLIC_KEYS first:\n  {pub}")
+        env = dict(os.environ, SOURCE_DATE_EPOCH=_git("show", "-s", "--format=%ct", tag))
+        subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", str(Path(d) / "dist"), str(src)],
+                       check=True, env=env, capture_output=True)
+        wheel = Path(d) / "dist" / f"camagent-{version}-py3-none-any.whl"
+        if not wheel.exists():
+            sys.exit(f"The build didn't make {wheel.name}.")
+        sums = f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  {wheel.name}\n".encode()
+        sig = base64.b64encode(key.sign(sums)) + b"\n"
+        sys.path.insert(0, str(src))
+        from camagent import release                      # the tag's own checker must accept it
+        release._check(version, sums, sig, wheel.read_bytes())
+        (Path(d) / "SHA256SUMS").write_bytes(sums)
+        (Path(d) / "SHA256SUMS.sig").write_bytes(sig)
+        subprocess.run(["gh", "release", "view", tag], cwd=REPO, check=True, capture_output=True)
+        subprocess.run(["gh", "release", "upload", tag, str(wheel), str(Path(d) / "SHA256SUMS"),
+                        str(Path(d) / "SHA256SUMS.sig"), "--clobber"], cwd=REPO, check=True)
+        # the Release workflow leaves it a draft (invisible to agents) until it's signed: publish it now
+        subprocess.run(["gh", "release", "edit", tag, "--draft=false", "--latest"], cwd=REPO, check=True,
+                       capture_output=True)
+    print(f"Signed, uploaded and published {tag}. Agents will install it on their next nightly check.")
+
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] not in ("key-new", "pubkey", "sign"):
+        sys.exit(__doc__)
+    if sys.argv[1] == "key-new":
+        key_new()
+    elif sys.argv[1] == "pubkey":
+        print(_public_b64(_load()))
+    else:
+        if len(sys.argv) != 3:
+            sys.exit("Usage: sign_release.py sign v0.16.0")
+        sign(sys.argv[2])
+
+
+if __name__ == "__main__":
+    main()

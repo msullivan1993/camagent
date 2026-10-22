@@ -8,7 +8,7 @@
 set -euo pipefail
 
 REPO="${CAMAGENT_REPO:-https://github.com/msullivan1993/camagent.git}"
-REF="${CAMAGENT_REF:-main}"
+REF="${CAMAGENT_REF:-}"     # default: the latest published release (below), never untested "main"
 APP=/opt/camagent
 ETC=/etc/camagent
 
@@ -19,7 +19,7 @@ fi
 
 echo "==> Installing system packages (python3, ffmpeg, git)"
 apt-get update -qq
-apt-get install -y -qq python3 python3-venv python3-pip ffmpeg git >/dev/null
+apt-get install -y -qq python3 python3-venv python3-pip ffmpeg git curl >/dev/null
 
 python3 - << 'EOF'
 import sys
@@ -32,6 +32,15 @@ id camagent >/dev/null 2>&1 || useradd --system --home-dir /var/lib/camagent --n
 mkdir -p "$APP" "$ETC"
 chown root:camagent "$ETC"
 chmod 750 "$ETC"
+
+if [ -z "$REF" ]; then
+  REF=$(curl -fsSL -H "User-Agent: camagent-installer" https://api.github.com/repos/msullivan1993/camagent/releases/latest \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tag_name") or "")') || REF=""
+  if [ -z "$REF" ]; then
+    echo "Couldn't find the latest camagent release (GitHub didn't answer). Try again in a few minutes." >&2
+    exit 1
+  fi
+fi
 
 echo "==> Installing camagent from $REPO ($REF)"
 [ -x "$APP/venv/bin/python" ] || python3 -m venv "$APP/venv"

@@ -33,14 +33,25 @@ def version_tuple(v):
     return tuple(int(n) for n in nums[:3]) if nums else (0,)
 
 
-def _install(repo, ref):
-    spec = f"camagent @ git+{repo}@{ref}"
-    pip = [sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "-q"]
+def _pip_install(spec):
+    # -I everywhere: Python ignores the current folder (and PYTHON* settings), so nothing there can be run as root
+    pip = [sys.executable, "-I", "-m", "pip", "install", "--disable-pip-version-check", "-q"]
     # first pass picks up any new dependencies; second forces the code itself to refresh
     subprocess.run(pip + ["--upgrade", spec], check=True)
     subprocess.run(pip + ["--upgrade", "--force-reinstall", "--no-deps", spec], check=True)
-    return subprocess.run([sys.executable, "-m", "camagent", "version"],
-                          capture_output=True, text=True).stdout.strip()
+    return subprocess.run([sys.executable, "-I", "-m", "camagent", "version"], capture_output=True,
+                          text=True).stdout.strip()
+
+
+def _install(repo, tag):
+    """Install a signed release (see release.py). Raises release.NotSigned if it isn't one."""
+    from . import release
+    return _pip_install(str(release.fetch(repo, tag)))
+
+
+def _install_unsigned(repo, ref):
+    """Straight from git, unchecked: only when asked by hand with --unsigned (testing a branch)."""
+    return _pip_install(f"camagent @ git+{repo}@{ref}")
 
 
 def _status():
@@ -72,14 +83,16 @@ def _refresh_unit(config_path=None):
     own service.refresh_unit would write the old unit (0.14.2's video group only arrived one update later)."""
     import subprocess
     import sys
-    code = "import sys; from camagent import service; service.refresh_unit(sys.argv[1] or None)"
-    r = subprocess.run([sys.executable, "-c", code, str(config_path or "")], capture_output=True, text=True,
+    code = ("import sys; from camagent import config, service; service.refresh_unit(sys.argv[1] or None); "
+            "getattr(config, 'migrate_account', lambda p: None)(sys.argv[1] or None)")
+    r = subprocess.run([sys.executable, "-I", "-c", code, str(config_path or "")], capture_output=True, text=True,
                        timeout=60)
     if r.returncode:
         service.refresh_unit(config_path)          # the new version couldn't start: keep the old unit current
 
 
-def run(config_path=None, ref=None, auto=False, jitter=0):
+def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False):
+    from .release import NotSigned
     service._require_admin()
     cfg = config.load_or_defaults(config_path)
     repo = cfg["update"]["repo"]
@@ -87,9 +100,19 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
         raise SystemExit("Set [update] repo in the config to your repository URL first.")
 
     if not auto:
-        ref = ref or cfg["update"].get("ref") or latest_release(repo) or "main"
-        print(f"Updating from camagent {__version__} to the newest on {ref} ({repo})...")
-        print(f"Installed: {_install(repo, ref)}")
+        ref = ref or cfg["update"].get("ref") or latest_release(repo)
+        if not ref:
+            raise SystemExit("Couldn't find the latest release (GitHub didn't answer). Try again later.")
+        if unsigned:
+            print(f"Installing camagent from {ref} ({repo}) WITHOUT checking its signature (--unsigned)...")
+            print(f"Installed: {_install_unsigned(repo, ref)}")
+        else:
+            print(f"Updating from camagent {__version__} to {ref} (signed release)...")
+            try:
+                print(f"Installed: {_install(repo, ref)}")
+            except NotSigned as e:
+                raise SystemExit(f"Not installed: {e}.\nOnly releases signed with YonderView's release key are "
+                                 f"installed. (For testing a branch: camagent update --ref <branch> --unsigned)")
         _refresh_unit(config_path)
         service.restart()
         # computers set up before automatic updates existed get them now (on by default; off in the menu)
@@ -115,6 +138,9 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
         _install(repo, tag)
         _refresh_unit(config_path)
         service.restart()
+    except NotSigned as e:
+        _log(f"NOT installing {tag}: {e}. Staying on {previous}.")
+        return
     except Exception as e:  # noqa: BLE001
         _log(f"install of {tag} failed: {e}; staying on {previous}")
         return
@@ -123,11 +149,13 @@ def run(config_path=None, ref=None, auto=False, jitter=0):
 
     _log(f"{tag} didn't come up healthy within {VERIFY_SECONDS}s; rolling back to {previous}")
     try:
-        _install(repo, f"v{previous}")
+        _install(repo, f"v{previous}")          # signed, usually the copy kept in releases/
         _refresh_unit(config_path)
         service.restart()
         _log(f"rolled back to {previous}" + (" and it's streaming again" if _verify(previous, before) else
                                              "; check the cameras (camagent doctor)"))
+    except NotSigned as e:
+        _log(f"can't roll back to {previous} automatically ({e}). {tag} stays; check the cameras (camagent doctor).")
     except Exception as e:  # noqa: BLE001
         _log(f"rollback failed: {e}. Run 'camagent update --ref v{previous}' by hand.")
 

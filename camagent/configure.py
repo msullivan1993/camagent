@@ -475,6 +475,8 @@ def test_mqtt(cfg):
             pass
 
     c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"{p['camera_id']}-test")
+    if not p.get("mqtt_tls") and p.get("mqtt_host") not in ("localhost", "127.0.0.1", "::1"):
+        return False, "the settings ask for MQTT without encryption (mqtt_tls off); the agent won't send its password that way"
     c.username_pw_set(p["camera_id"], p["mqtt_password"])
     if p.get("mqtt_tls"):
         c.tls_set()

@@ -35,6 +35,7 @@ def missing_settings(cfg):
     return missing
 
 
+MAX_COMMAND_BYTES = 64 * 1024        # the website's commands are a few hundred bytes
 CONTROL_OPS = {"focus", "autofocus", "daynight", "aux", "home", "reboot", "sync_clock", "point", "probe"}
 
 
@@ -118,11 +119,18 @@ class CameraAgent:
             return
         req = None
         try:
+            if len(msg.payload) > MAX_COMMAND_BYTES:
+                raise RuntimeError("command too big; ignored")
             cmd = json.loads(msg.payload)
+            if not isinstance(cmd, dict):
+                raise RuntimeError("not a command; ignored")
             req = cmd.get("req")
             ts = cmd.get("ts")
-            if ts and time.time() - float(ts) > float(self.cfg["agent"].get("stale_command_s", 5)):
-                raise RuntimeError("command too old; ignored")
+            if not isinstance(ts, (int, float)):
+                raise RuntimeError("command without a time; ignored")      # the website always sends one
+            age = time.time() - float(ts)
+            if age > float(self.cfg["agent"].get("stale_command_s", 5)) or age < -60:
+                raise RuntimeError("command too old (or from the future); ignored")
             result = self._handle(cmd)
             if cmd.get("op") != "move":
                 self.log.info("command: %s", cmd.get("op"))

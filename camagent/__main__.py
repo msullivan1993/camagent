@@ -42,7 +42,9 @@ def main(argv=None):
     sub.add_parser("uninstall-service", help="stop CamAgent running in the background")
     sub.add_parser("restart", help="restart CamAgent")
     up = sub.add_parser("update", help="update CamAgent now and restart it")
-    up.add_argument("--ref", help="branch or tag to install (default from config)")
+    up.add_argument("--ref", help="release tag to install (default: the latest release)")
+    up.add_argument("--unsigned", action="store_true",
+                    help="install --ref (e.g. a branch) straight from git without checking a signature (testing only)")
     up.add_argument("--auto", action="store_true", help="scheduled run: install only a newer release, verify, roll back if needed")
     up.add_argument("--jitter", type=int, default=0, help=argparse.SUPPRESS)
     w = sub.add_parser("weather", help="add, change or remove a camera's local weather station (beta)")
@@ -148,7 +150,7 @@ def main(argv=None):
 
     elif args.cmd == "update":
         from .update import run
-        run(cfg_path, args.ref, auto=args.auto, jitter=args.jitter)
+        run(cfg_path, args.ref, auto=args.auto, jitter=args.jitter, unsigned=args.unsigned)
 
 
 if __name__ == "__main__":

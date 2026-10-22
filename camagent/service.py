@@ -69,6 +69,27 @@ Environment=XDG_CACHE_HOME=/var/lib/camagent/cache
 ExecStart={sys.executable} -m camagent run --config {config_path}
 Restart=always
 RestartSec=5
+# Sandbox (0.16): ffmpeg reads video from the network, so if a bad camera stream ever broke it, it still couldn't
+# change the system, read home folders, or gain privileges. It may write only its own /var/lib/camagent and a private
+# /tmp. Devices stay reachable for the hardware encoders (/dev/dri, /dev/video*).
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target

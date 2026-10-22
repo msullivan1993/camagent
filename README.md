@@ -137,6 +137,9 @@ same network and show its conditions on the camera's page. Menu: *Weather statio
 **Automatic updates** are on unless you turn them off during setup (or later from the menu): each night
 around 3 AM camagent installs a newer release if there is one, checks the cameras come back, and goes back
 to the previous version if they don't. Results are in `logs/update.log` and in `camagent doctor`.
+Since 0.16 it installs only releases **signed with YonderView's release key** (kept offline, not on GitHub): a
+release without a valid signature is refused, so even someone who took over the GitHub account couldn't push code to
+your computer. `camagent update --ref <branch> --unsigned` installs straight from git, for testing only.
 
 **Setup measures the stream** for a few seconds and shows what the camera sends (resolution, frame
 rate, bitrate, keyframe interval). It only raises things that cause problems: a stream over the camera's
@@ -185,7 +188,7 @@ Upgrading from 0.1.x: the existing camera keeps working as is. The first time it
 | `camagent install-service` | Install and start the service |
 | `camagent uninstall-service` | Remove the service |
 | `camagent restart` | Restart the service |
-| `camagent update` | Update from Git and restart |
+| `camagent update` | Install the latest signed release and restart |
 | `camagent version` | Show the version |
 
 ## Troubleshooting
@@ -198,12 +201,16 @@ on Linux). It checks every piece CamAgent depends on and says what to do about a
 | | Linux | Windows |
 |---|---|---|
 | Shared settings | `/etc/camagent/camagent.toml` | `C:\ProgramData\camagent\camagent.toml` |
+| YonderView sign-in | `/etc/camagent/account.toml` (root only) | in `camagent.toml` |
+| Verified releases (for rolling back) | `/opt/camagent/releases` | `C:\ProgramData\camagent\releases` |
 | Cameras | `/etc/camagent/cameras/<camera>.toml` | `C:\ProgramData\camagent\cameras\<camera>.toml` |
 | Live status | `/var/lib/camagent/status.json` | `C:\ProgramData\camagent\status.json` |
 | Program | `/opt/camagent/venv` | `C:\ProgramData\camagent\venv` |
 | Logs | `journalctl -u camagent -f` | `C:\ProgramData\camagent\logs` |
 
-The config contains passwords and is readable only by administrators and the service.
+The config contains passwords and is readable only by administrators and the service. On Linux the service runs
+as its own `camagent` user in a systemd sandbox (read-only system, no home folders, no extra privileges); it can
+write only `/var/lib/camagent`.
 On Linux, after upgrading from 0.1.x, run `sudo camagent install-service` once so `camagent list` can show live status.
 
 ## MQTT topics

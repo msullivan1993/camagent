@@ -108,10 +108,24 @@ def _merge(defaults, loaded):
     return out
 
 
+def account_path(main_path=None) -> Path:
+    """Linux: the YonderView sign-in lives in its own file only root can read (0.16). The service never uses it,
+    so even if something broke into the service account, the token (which can list and reconnect every camera on
+    the account) stays out of reach. Windows keeps it in camagent.toml (that folder is Administrators/SYSTEM only)."""
+    return Path(main_path or default_config_path()).parent / "account.toml"
+
+
 def load(path=None) -> dict:
     path = Path(path or default_config_path())
     with path.open("rb") as f:
-        return _merge(DEFAULTS, tomllib.load(f))
+        cfg = _merge(DEFAULTS, tomllib.load(f))
+    if os.name != "nt":
+        try:
+            with account_path(path).open("rb") as f:
+                cfg["account"] = dict(DEFAULTS["account"], **(tomllib.load(f).get("account") or {}))
+        except (FileNotFoundError, PermissionError):
+            pass                                  # not signed in, or the service (it doesn't need it)
+    return cfg
 
 
 def load_or_defaults(path=None) -> dict:
@@ -165,9 +179,46 @@ def _secure_dir(d: Path):
             pass
 
 
+def _save_account(account: dict, main_path: Path):
+    """Write the sign-in to account.toml: root only (0600), replaced atomically."""
+    path = account_path(main_path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".account.")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(dumps({"account": account}, ["account"], "YonderView sign-in for this computer (root only)"))
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def migrate_account(main_path=None):
+    """Move a sign-in still in camagent.toml (before 0.16) to account.toml. Run as root (setup, updates)."""
+    main_path = Path(main_path or default_config_path())
+    if os.name == "nt" or not main_path.exists():
+        return
+    try:
+        with main_path.open("rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, ValueError):
+        return
+    if "account" in raw:
+        save(load(main_path), main_path, [s for s in raw if s in DEFAULTS] or None,
+             "camagent shared settings (cameras are in the cameras folder)" if "camera" not in raw else
+             "camagent configuration")
+
+
 def save(cfg: dict, path=None, sections=None, title="camagent configuration") -> Path:
     path = Path(path or default_config_path())
     _secure_dir(path.parent)
+    sections = list(sections or DEFAULTS)
+    if os.name != "nt" and "account" in sections:
+        sections.remove("account")                 # in its own root-only file (account_path)
+        _save_account(cfg.get("account") or {}, path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".camagent.")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:

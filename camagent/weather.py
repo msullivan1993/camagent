@@ -51,6 +51,17 @@ def tempest_socket(timeout=1.0):
     return s
 
 
+def _from_lan(addr):
+    """Tempest hubs are on the local network: ignore packets from anywhere else (e.g. a port left open to the
+    internet)."""
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(addr[0])
+    except (ValueError, IndexError, TypeError):
+        return False
+    return ip.is_private or ip.is_link_local
+
+
 def tempest_discover(seconds=15):
     """Serial numbers of Tempest stations heard on this network: {serial: hub_serial}."""
     found, end = {}, time.time() + seconds
@@ -61,8 +72,11 @@ def tempest_discover(seconds=15):
     with s:
         while time.time() < end:
             try:
-                msg = json.loads(s.recv(4096))
+                data, addr = s.recvfrom(4096)
+                msg = json.loads(data)
             except (socket.timeout, ValueError):
+                continue
+            if not _from_lan(addr) or not isinstance(msg, dict):
                 continue
             if msg.get("type") in ("obs_st", "rapid_wind", "device_status") and msg.get("serial_number"):
                 found[msg["serial_number"]] = msg.get("hub_sn", "")
@@ -230,6 +244,7 @@ class Reader:
         self.interval = max(10, int(wcfg.get("interval_s") or 30))
         self.uid = self.serial if self.kind == "tempest" else ""
         self._sock = None
+        self._hub = wcfg.get("hub_ip", "")
         self._day = TempestDay()
 
     def station_id(self):
@@ -256,13 +271,21 @@ class Reader:
             end = time.time() + (wait or 70)                     # obs_st arrives about once a minute
             while time.time() < end:
                 try:
-                    msg = json.loads(self._sock.recv(4096))
+                    data, addr = self._sock.recvfrom(4096)
+                    msg = json.loads(data)
                 except socket.timeout:
                     continue
                 except ValueError:
                     continue
+                if not _from_lan(addr) or not isinstance(msg, dict):
+                    continue
                 if self.serial and msg.get("serial_number") != self.serial:
                     continue
+                # the first matching packet's sender is the hub; after that, only it (another computer on the
+                # network can't feed made-up readings by sending the station's serial number)
+                if self._hub and addr[0] != self._hub:
+                    continue
+                self._hub = addr[0]
                 if not self.uid and msg.get("serial_number"):
                     self.uid = msg["serial_number"]
                 r = parse_tempest(msg, self._day, self.elevation)
