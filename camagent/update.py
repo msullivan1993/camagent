@@ -103,7 +103,8 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False):
         asked = ref or cfg["update"].get("ref")
         ref = asked or latest_release(repo)
         if not ref:
-            raise SystemExit("Couldn't find the latest release (GitHub didn't answer). Try again later.")
+            raise SystemExit("Couldn't check for a new version (GitHub, where CamAgent's releases are kept, didn't answer). "
+                             "Check this computer's internet connection and try again in a few minutes.")
         if re.fullmatch(r"\d+\.\d+\.\d+", ref):
             ref = "v" + ref                          # "0.16.1" means the release v0.16.1
         if not asked and not unsigned and version_tuple(ref) < version_tuple(__version__):
@@ -111,15 +112,16 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False):
             raise SystemExit(f"The latest release ({ref}) is older than this one ({__version__}); not going back. "
                              f"To install it anyway: camagent update --ref {ref}")
         if unsigned:
-            print(f"Installing camagent from {ref} ({repo}) WITHOUT checking its signature (--unsigned)...")
+            print(f"Installing CamAgent from {ref} ({repo}) WITHOUT checking its signature (--unsigned, for testing only)...")
             print(f"Installed: {_install_unsigned(repo, ref)}")
         else:
-            print(f"Updating from camagent {__version__} to {ref} (signed release)...")
+            print(f"Updating CamAgent from {__version__} to {ref} (checking it's an official, signed release)...")
             try:
                 print(f"Installed: {_install(repo, ref)}")
             except NotSigned as e:
-                raise SystemExit(f"Not installed: {e}.\nOnly releases signed with YonderView's release key are "
-                                 f"installed. (For testing a branch: camagent update --ref <branch> --unsigned)")
+                raise SystemExit(f"Not installed: {e}.\nFor your safety, CamAgent only installs releases signed with YonderView's "
+                                 f"release key; this computer is unchanged. (For testing a branch: camagent update "
+                                 f"--ref <branch> --unsigned)")
         _refresh_unit(config_path)
         service.restart()
         # computers set up before automatic updates existed get them now (on by default; off in the menu)

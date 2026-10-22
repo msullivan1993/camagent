@@ -397,7 +397,8 @@ def describe(caps):
     if "events" in caps:
         out.append(f"Alarms:      {'yes (covered, moved, out of focus... are reported)' if caps['events'] else 'not supported'}")
     if caps.get("denied"):
-        out.append(f"Not allowed: {', '.join(caps['denied'])}  (the camera login camagent uses needs a higher level)")
+        out.append(f"Not allowed: {', '.join(caps['denied'])}  (the camera login CamAgent uses needs a higher level, "
+                   "such as Operator or Administrator, in the camera's user settings)")
     return out
 
 
@@ -436,7 +437,7 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     cam = _pick(cams, camera_id)
     if cam is None:
         return
-    print(f"Asking {cam['camera'].get('host')} what it supports...")
+    print(f"Asking the camera at {cam['camera'].get('host')} what it can do...")
     p = PTZ(cam) if cam["camera"].get("ptz", True) else None
     try:
         if p:
@@ -445,7 +446,8 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
             p = OnvifSession(cam)
             p._connect()
     except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"Couldn't reach the camera over ONVIF: {e}")
+        raise SystemExit(f"Couldn't connect to the camera ({e}). Check that it's on and on this network, and that "
+                         "ONVIF is turned on in its web page.")
     ctl = Controls(p)
     caps = ctl.probe()
     try:                                                     # alarms: does it publish an event feed at all?
@@ -466,7 +468,7 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     elif moves:
         print("\n  This camera doesn't offer absolute moves, so there's nothing to test.")
     else:
-        print("\nNothing was moved or switched on. Controls can be tried from the camera's Control page.")
+        print("\nNothing was moved or switched on. You can try the controls on the camera's Control page on yonderview.net.")
         if (caps.get("ptz") or {}).get("absolute"):
             print("To check whether its absolute moves really work: camagent probe --test-moves")
 
@@ -485,13 +487,14 @@ def cli_fix_stream(config_path=None, camera_id=None):
     try:
         p._connect()
     except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"Couldn't reach the camera over ONVIF: {e}")
+        raise SystemExit(f"Couldn't connect to the camera ({e}). Check that it's on and on this network, and that "
+                         "ONVIF is turned on in its web page.")
     c = Controls(p)
     changes = c.stream_fixes(apply=False)
     if not changes:
-        print("The camera's stream is already set up the way YonderView wants it.")
+        print("Nothing to change: the camera's video already meets YonderView's requirements.")
         return
-    print("These changes would bring the camera's stream in line:")
+    print("To meet YonderView's requirements, CamAgent would change these camera settings:")
     for ch in changes:
         print("  - " + ch)
     if not yes("Change them on the camera now?", default=True):
@@ -501,8 +504,8 @@ def cli_fix_stream(config_path=None, camera_id=None):
     try:
         c.stream_fixes(apply=True)
     except NotAllowed as e:
-        raise SystemExit(f"{e}. Or change these in the camera's own web page.")
-    print("Done. The stream restarts with the new settings within a minute.")
+        raise SystemExit(f"{e}. Or change these yourself in the camera's own web page (Video or Encode settings).")
+    print("Done. The camera's video restarts with the new settings within a minute.")
     if had_sound:
         import time
         print("Checking the camera still sends sound...")

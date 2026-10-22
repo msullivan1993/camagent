@@ -14,7 +14,7 @@ $Bin  = Join-Path $Base "bin"
 
 $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
          ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $admin) { throw "Please run PowerShell as Administrator." }
+if (-not $admin) { throw "This installer needs administrator rights. Close this window, press the Windows key, type PowerShell, right-click Windows PowerShell, choose 'Run as administrator', and paste the install line again." }
 
 function Refresh-Path {
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
@@ -24,11 +24,11 @@ function Refresh-Path {
 
 function Winget-Install($id) {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-        throw "winget isn't available. Install '$id' manually, then run this again."
+        throw "winget (Windows' app installer) isn't available. Update 'App Installer' from the Microsoft Store, or install '$id' yourself, then run this again."
     }
     # for all users (Program Files): the service runs these as SYSTEM, so a normal user mustn't be able to change them
     winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent
-    if ($LASTEXITCODE -ne 0) { Write-Host "    (winget said $LASTEXITCODE for $id; it may already be installed for one user only)" }
+    if ($LASTEXITCODE -ne 0) { Write-Host "    (winget returned code $LASTEXITCODE for $id; it may already be installed, possibly for one user only)" }
     Refresh-Path
 }
 
@@ -48,19 +48,19 @@ function Find-Python {
     $p = Get-Command python -ErrorAction SilentlyContinue
     if ($p) { $cands += $p.Source }
     foreach ($exe in $cands | Select-Object -Unique) {
-        if (-not (Test-AllUsersPath $exe)) { Write-Host "    (skipping $exe : not installed for all users)"; continue }
+        if (-not (Test-AllUsersPath $exe)) { Write-Host "    (skipping $exe : it's installed for one user only, and CamAgent needs one installed for all users)"; continue }
         $ok = & $exe -c "import sys;print(1 if sys.version_info>=(3,11) else 0)" 2>$null
         if ($LASTEXITCODE -eq 0 -and "$ok".Trim() -eq "1") { return $exe }
     }
     return $null
 }
 
-Write-Host "==> Checking Python 3.11+"
+Write-Host "==> Checking for Python 3.11 or newer"
 $py = Find-Python
 if (-not $py) {
     Winget-Install "Python.Python.3.12"
     $py = Find-Python
-    if (-not $py) { throw "Python installed, but this window can't see it yet. Open a new Administrator PowerShell and run the installer again." }
+    if (-not $py) { throw "Python was installed, but this window can't see it yet. Close it, open a new PowerShell as administrator, and run the install line again." }
 }
 Write-Host "    $py"
 
@@ -76,17 +76,17 @@ if (-not $Ref) {
         $Ref = (Invoke-RestMethod -UseBasicParsing -Headers @{ "User-Agent" = "camagent-installer" } `
                 "https://api.github.com/repos/msullivan1993/camagent/releases/latest").tag_name
     } catch { }
-    if (-not $Ref) { throw "Couldn't find the latest camagent release (GitHub didn't answer). Try again in a few minutes." }
+    if (-not $Ref) { throw "Couldn't find the latest CamAgent release (GitHub didn't answer). Check this computer's internet connection and try again in a few minutes." }
 }
 
-Write-Host "==> Installing camagent from $Repo ($Ref)"
+Write-Host "==> Installing CamAgent $Ref"
 # The folder holds passwords and the code the service runs as SYSTEM: lock it to Administrators and SYSTEM
 # *before* anything goes in it (a folder a normal user made first would stay theirs to change).
 if (Test-Path $Base) {
     # by SID (names differ by language): Administrators, SYSTEM or TrustedInstaller
     $owner = (Get-Acl $Base).GetOwner([Security.Principal.SecurityIdentifier]).Value
     if ($owner -notin @("S-1-5-32-544", "S-1-5-18", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")) {
-        throw "$Base already exists and isn't owned by Administrators ($owner). Delete it (or check who made it), then run this again."
+        throw "The folder $Base already exists, but it wasn't made by an administrator (owner: $owner), so it isn't safe to use. Delete that folder (or check who made it), then run this again."
     }
 } else {
     New-Item -ItemType Directory -Force -Path $Base | Out-Null
@@ -104,7 +104,7 @@ if (Test-Path $cfgFile) {
     foreach ($line in Get-Content $cfgFile) { if ($line -match '^home\s*=\s*(.+)$') { $venvHome = $Matches[1].Trim() } }
 }
 if ((Test-Path $cfgFile) -and -not ($venvHome -and (Test-AllUsersPath $venvHome))) {
-    Write-Host "    the old program folder was made from a Python in a user's profile: making it again"
+    Write-Host "    rebuilding CamAgent's program folder (the old one used a Python installed for one user only)"
     Stop-Service -Name camagent -ErrorAction SilentlyContinue      # it runs from that folder
     Remove-Item -Recurse -Force $venv
 }
@@ -129,16 +129,17 @@ try {
     $sc.TargetPath = $venvPy
     $sc.Arguments = "-I -m camagent"
     $sc.WorkingDirectory = $Base
-    $sc.Description = "camagent: YonderView camera agent"
+    $sc.Description = "CamAgent: sends your camera to YonderView"
     $sc.Save()
-} catch { Write-Host "    (couldn't create the Start menu shortcut: $_)" }
+} catch { Write-Host "    (couldn't create the Start menu shortcut: $_. You can still type camagent in an administrator window.)" }
 
 
 Write-Host ""
 & $venvPy -m camagent version
 Write-Host ""
 if (Test-Path (Join-Path $Base "camagent.toml")) {
-    Write-Host "Existing config kept. Restart to apply the update:  camagent restart"
+    Write-Host "Your existing settings were kept. To start using the new version now, type:  camagent restart"
 } else {
-    Write-Host "Next step (in this Administrator window):  camagent   (then choose Add a camera)"
+    Write-Host "CamAgent is installed. Next: type camagent in this window (or open CamAgent from the Start menu)"
+    Write-Host "and choose 'Add a camera'."
 }

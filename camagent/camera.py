@@ -189,8 +189,9 @@ def onvif_inspect(host, port, user, password) -> dict:
 def ffmpeg_install_hint() -> str:
     import os
     if os.name == "nt":
-        return "winget install -e --id Gyan.FFmpeg   (then open a new Command Prompt)"
-    return "sudo apt install ffmpeg"
+        return ("in an administrator window, type: winget install -e --id Gyan.FFmpeg --scope machine "
+                "(then open CamAgent again in a new window)")
+    return "type: sudo apt install ffmpeg"
 
 
 def find_ffmpeg(configured: str = "") -> str:
@@ -252,9 +253,9 @@ def sound_check(cfg):
     return audio_arrives(ffprobe, rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
 
 
-AUDIO_LOST = ("  Note: the camera stopped sending sound after this change (some camera firmware switches audio off\n"
-              "  when its video settings are changed over ONVIF). camagent sends video only until it's back and adds\n"
-              "  the sound again by itself. Rebooting the camera usually fixes it; if not, turn audio on again in the\n"
+AUDIO_LOST = ("  Note: the camera stopped sending sound after this change (some cameras switch audio off when\n"
+              "  their video settings are changed this way). CamAgent sends video only until the sound is back, then\n"
+              "  adds it again by itself. Restarting the camera usually fixes it; if not, turn audio on again in the\n"
               "  camera's own web page (often \"Video & Audio\" as the stream type).")
 
 
@@ -335,12 +336,14 @@ def stream_advice(m: dict, max_height=None):
     tips = []
     fps, actual, gop, h = m.get("declared_fps"), m.get("actual_fps"), m.get("keyframe_s"), m.get("height")
     if max_height and h and h > max_height:
-        tips.append(f"The stream is {h}p but this camera's limit on YonderView is {max_height}p: it would be "
-                    f"declined. Set the camera's stream to {max_height}p or lower, or let camagent convert it "
-                    f"to 1080p on this computer (camagent configure).")
+        tips.append(f"The camera sends {h}p, but this camera's limit on YonderView is {max_height}p, so its video "
+                    f"would be declined. Set the camera's video to {max_height}p or lower in its web page, or let "
+                    f"CamAgent convert it to 1080p on this computer (open CamAgent > Change or remove a camera > "
+                    f"Change a camera's settings).")
     if fps and actual and actual < 0.85 * fps:
         tips.append(f"Only {actual:g} of {fps:g} frames per second actually arrived. In low light many cameras "
-                    "slow down on their own; otherwise the camera may be overloaded.")
+                    "slow down on their own, which is fine; otherwise the camera may be overloaded (restarting it "
+                    "often helps).")
     if gop and gop > 4:
         tips.append(f"The camera sends a full picture (keyframe) only every {gop:g} seconds; YonderView needs one at "
                     "least every 4 (2 is best). In the camera's web page, set \"I-frame interval\" or \"keyframe "

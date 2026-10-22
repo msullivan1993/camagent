@@ -258,16 +258,16 @@ class Versions:
                                      timeout=20)               # a 2 s clip: a working engine needs well under 10 s
             self.method = next((m for m, speed in results if speed), None)
             if self.method:
-                self.log.info("this PC can make lower-quality versions (%s)", convert.LABELS.get(self.method))
+                self.log.info("this PC can make the lower-quality copies (720p/480p) itself (%s)", convert.LABELS.get(self.method))
             else:
                 why = "; ".join(f"{convert.LABELS.get(m, m)}: {convert.LAST_ERRORS.get(m, 'no answer')}"
                                 for m, _ in results) or "no video engine to try on this computer"
-                self.log.warning("this PC can't make lower-quality versions, so the server makes them (%s)", why)
+                self.log.warning("this PC can't make the lower-quality copies (720p/480p), so YonderView's server makes them (%s)", why)
             timed_out = any("timed out" in str(convert.LAST_ERRORS.get(m, "")) for m, _ in results)
             if self.method or not timed_out:       # a hung engine (fixed by a reboot) isn't a lasting "no"
                 self._save_check()
         except Exception as e:  # noqa: BLE001  -- no GPU method: the server makes them
-            self.log.warning("the check for making lower-quality versions failed: %s", e)
+            self.log.warning("couldn't check whether this PC can make the lower-quality copies (720p/480p): %s", e)
         finally:
             self.checked, self._checking = True, False
 
@@ -311,7 +311,7 @@ class Versions:
             self.wanted = None
             self.keep_until = 0.0
             self._kill()
-        self.log.info("versions stopped (%s)", reason)
+        self.log.info("stopped making the lower-quality copies (%s)", reason)
         return {"ok": True}
 
     def shutdown(self):
@@ -352,7 +352,7 @@ class Versions:
         audio = bool(self.uplink and self.uplink.stats.get("audio") == "on")
         cmd = args(ffmpeg, self.method, rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]),
                    outputs, files, mark, audio, s.get("wallclock_timestamps", True))
-        self.log.info("making %s with %s -> %s", ", ".join(o["suffix"] + "p" for o in outputs),
+        self.log.info("making the %s copies with %s -> %s", ", ".join(o["suffix"] + "p" for o in outputs),
                       convert.LABELS.get(self.method, self.method), redact(outputs[0]["url"]))
         cmd[1:1] = ["-progress", "pipe:1", "-nostats"]       # its speed, to notice a PC that can't keep up
         self.started, self.speed, self.slow_since = time.time(), None, None
@@ -386,7 +386,7 @@ class Versions:
                 self.log.debug("versions ffmpeg: %s", line)
                 continue
             self.error = line[-200:]
-            self.log.warning("versions ffmpeg: %s", line)
+            self.log.warning("lower-quality copies (ffmpeg): %s", line)
 
     def _kill(self):
         p, self.proc = self.proc, None
@@ -413,14 +413,14 @@ class Versions:
                 if time.time() > self.keep_until:
                     self.wanted = None
                     self._kill()
-                    self.log.info("versions stopped (the website stopped asking)")
+                    self.log.info("stopped making the lower-quality copies (nobody is watching them now)")
                     continue
                 if self.running() and time.time() - getattr(self, "frame_at", time.time()) > STUCK_S:
                     # ffmpeg is connected but nothing comes out: a Raspberry Pi's engine left hung by an earlier
                     # interrupted run does this until the computer restarts. Say so; the server covers meanwhile.
                     self.error = ("the video engine stopped responding (restarting this computer usually fixes "
                                   "it); the server makes the lower qualities meanwhile")
-                    self.log.warning("versions: no new frame for %ss; %s", STUCK_S, self.error)
+                    self.log.warning("lower-quality copies: no new picture for %ss; %s", STUCK_S, self.error)
                     self.gave_up, self.wanted = time.time(), None
                     self._kill()
                     continue
@@ -431,7 +431,7 @@ class Versions:
                         self.slow_since = time.time()
                     elif time.time() - self.slow_since > SLOW_FOR_S:
                         self.error = f"this PC is too slow for these versions ({self.speed:.2f}x real time)"
-                        self.log.warning("%s; the server will make them (trying again in an hour)", self.error)
+                        self.log.warning("%s; YonderView's server will make them (trying again in an hour)", self.error)
                         self.gave_up, self.wanted = time.time(), None
                         self._kill()
                         continue
@@ -441,12 +441,12 @@ class Versions:
                     lite = f"{self.method}-lite"
                     if self.fast_fails >= MAX_FAST_FAILS and lite in GPU_METHODS:
                         # decoding on the GPU fails on this camera (e.g. 4K on a Raspberry Pi): decode on the CPU
-                        self.log.warning("versions keep failing with %s; decoding on the CPU instead",
+                        self.log.warning("the lower-quality copies keep failing with %s; decoding on the processor (CPU) instead",
                                          convert.LABELS.get(self.method))
                         self.method, self.fast_fails = lite, 0
                     if self.fast_fails >= MAX_FAST_FAILS:
                         self.gave_up, self.wanted = time.time(), None
-                        self.log.warning("versions keep failing (%s); the server will make them", self.error)
+                        self.log.warning("the lower-quality copies keep failing (%s); YonderView's server will make them", self.error)
                         continue
                     versions, mark = json.loads(self.wanted)
                     self._start(versions, mark)

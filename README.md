@@ -8,8 +8,8 @@ which saves YonderView's server the work. A Raspberry Pi sends the camera's own 
 ## First-time setup (about 10 minutes)
 
 **Before you start:** on yonderview.net, sign in (or create an account), choose **Host a camera**, and
-wait for the camera to be approved. Have the camera plugged in, and know its username and password
-(the ones for its app or web page).
+wait for the camera to be approved. Have the camera plugged in and on the same network as the computer,
+and know its username and password (the ones for its phone app or web page, not your YonderView login).
 
 **1. Install CamAgent.**
 
@@ -34,11 +34,28 @@ CamAgent and never touches your settings.
 an administrator PowerShell. On Linux, type `sudo camagent`.
 
 **3. Choose "2. Add a camera"** and answer the questions. CamAgent finds the camera, checks its video,
-signs in to YonderView (you type a code at yonderview.net/link), tests the connection, and starts
-sending. Within a minute your camera shows **Live** on yonderview.net.
+signs in to YonderView (you type a short code at yonderview.net/link on your phone or another computer),
+tests the connection, and starts sending. Within a minute your camera shows **Live** on yonderview.net.
 
-Stuck? Open CamAgent and choose **Check for problems**: it says what's wrong and what to do. Or use
-**Report a problem** on yonderview.net.
+**4. Leave the computer on**, and don't let it go to sleep (setup offers to turn sleep off on Windows).
+
+Stuck? Open CamAgent and choose **Check for problems**: it says what's wrong and what to do. See also
+[Common problems](#common-problems) below, or use **Report a problem** on yonderview.net.
+
+### Words you may see
+
+- **IP address**: the camera's address on your network, four numbers like `192.168.1.64`. Its phone app or
+  your router's list of devices shows it.
+- **The camera's web page**: type the camera's IP address into a web browser on the same network (for
+  example `http://192.168.1.64`) and sign in. That's where its settings are.
+- **ONVIF**: a standard way for programs like CamAgent to talk to cameras. Some cameras need it turned on in
+  their web page, sometimes with a separate ONVIF user.
+- **RTSP / video address**: the address the camera's live video comes from, starting `rtsp://`.
+- **H.264 / H.265**: video formats. YonderView needs H.264; most browsers can't play H.265.
+- **Keyframe**: a full picture in the video; YonderView needs one at least every 4 seconds.
+- **PTZ**: pan, tilt, zoom: a camera that can turn and zoom by remote control.
+- **Settings block**: a few lines of connection settings from your camera's page on yonderview.net, which
+  you can paste instead of signing in.
 
 ## How it works (technical)
 
@@ -67,7 +84,7 @@ Run `camagent` on its own (or the **CamAgent** Start menu shortcut on Windows) f
 everything, grouped by what you're doing:
 
 ```
-=== CamAgent 0.15.0 ===
+=== CamAgent 0.16.1 ===
 1 camera  |  CamAgent is running  |  YonderView: signed in as Mike
 
  Cameras
@@ -78,7 +95,7 @@ everything, grouped by what you're doing:
  If something's wrong
   4. Check for problems
   5. Restart CamAgent
-  6. Show the recent log
+  6. Show the recent log (useful for support)
 
  Settings
   7. Sign out of YonderView
@@ -164,7 +181,7 @@ camagent signin              # sign this computer in to your YonderView account
 camagent signout             # forget this computer's sign-in (unlink it on your profile to revoke it)
 camagent list                # every camera here, with live status
 camagent configure <camera>  # change one camera
-camagent remove <camera>     # stop sending a camera from this machine
+camagent remove <camera>     # stop sending a camera from this computer
 camagent doctor <camera>     # check one camera (or all of them, with no name)
 ```
 
@@ -181,7 +198,7 @@ Upgrading from 0.1.x: the existing camera keeps working as is. The first time it
 | `camagent add` | Set up another camera |
 | `camagent configure [camera]` | Change a camera's settings (or set up the first one) |
 | `camagent list` | List cameras with live status (stream, server connection, PTZ) |
-| `camagent remove [camera]` | Stop sending a camera from this machine |
+| `camagent remove [camera]` | Stop sending a camera from this computer |
 | `camagent run` | Run in the foreground (useful for testing) |
 | `camagent discover` | List ONVIF cameras on the network |
 | `camagent doctor [camera]` | Check Python, ffmpeg, each camera, the server, and the service, with fixes for anything wrong |
@@ -194,7 +211,29 @@ Upgrading from 0.1.x: the existing camera keeps working as is. The first time it
 ## Troubleshooting
 
 Open CamAgent and choose **Check for problems** (or run `camagent doctor` as administrator, or with `sudo`
-on Linux). It checks every piece CamAgent depends on and says what to do about anything that fails.
+on Linux). It checks every piece CamAgent depends on and says what to do about anything that fails:
+**[FAIL]** stops a camera from working, **[WARN]** is worth fixing but not urgent. Fix them from the top down.
+
+### Common problems
+
+- **"No cameras answered" when searching.** The camera must be on and on the same network as this
+  computer (not a guest Wi-Fi), with ONVIF turned on in its web page. You can also type its IP address.
+- **"The camera refused the username or password."** Try them in the camera's web page first. Many cameras
+  need a separate ONVIF user (made in that web page), and the camera's clock must be right: turn on
+  automatic time (NTP) in its settings.
+- **Viewers see a black player.** The camera is probably sending H.265. Set its main video to H.264 in its
+  web page (and turn off "smart codec" / H.264+), or let CamAgent change it (Advanced tools > Set a
+  camera's video to what YonderView needs).
+- **"Declined by YonderView".** The video is bigger than this camera's limit (usually 1080p). Set the camera
+  to 1080p, or let CamAgent convert it: Change or remove a camera > Change a camera's settings.
+- **The camera shows Offline on yonderview.net.** Check the computer is on and awake, and that the menu says
+  "CamAgent is running" (if not, choose Start or Restart CamAgent). If your router restarted, the camera
+  may have a new IP address: find it with Advanced tools > Search the network for cameras, then change
+  the camera's settings.
+- **"This needs administrator rights."** On Windows, open CamAgent from its Start menu shortcut (it asks for
+  administrator rights) or an administrator PowerShell; on Linux, type `sudo camagent`.
+
+Still stuck? Choose **Show the recent log**, and send it with **Report a problem** on yonderview.net.
 
 ## Files
 

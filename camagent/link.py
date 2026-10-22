@@ -81,7 +81,7 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
     if status == 429:
         raise LinkError(d.get("error") or "Too many sign-in attempts. Try again in a few minutes.")
     if status != 200 or not d.get("device_code"):
-        raise LinkError(f"The sign-in couldn't start (the server answered {status}). Try again in a minute.")
+        raise LinkError(f"The sign-in couldn't start (YonderView answered {status}). Try again in a minute.")
     show("")
     show("  On your phone or another computer, open:")
     show(f"      {d['verification_uri']}")
@@ -89,7 +89,7 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
     show("")
     show(f"      {d['user_code']}")
     show("")
-    show(f"  (Or open {d.get('verification_uri_complete', d['verification_uri'])} )")
+    show(f"  (Or open this link, which fills in the code for you: {d.get('verification_uri_complete', d['verification_uri'])} )")
     show(f"  Waiting for you to enter the code (it works for {int(d.get('expires_in') or 600) // 60} minutes; Ctrl+C cancels)...")
     interval = int(d.get("interval") or 5)
     deadline = time.monotonic() + int(d.get("expires_in") or 600)
@@ -105,10 +105,10 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
             interval += 2
             continue
         if state == "denied":
-            raise LinkError("The sign-in was declined on the website. Nothing changed.")
+            raise LinkError("The sign-in was declined on the website, so this computer wasn't linked. Nothing changed.")
         if state == "expired":
             break
-        raise LinkError(f"The sign-in stopped unexpectedly (the server answered {status}). Try again.")
+        raise LinkError(f"The sign-in stopped unexpectedly (YonderView answered {status}). Try again in a minute.")
     raise LinkError("The code expired before it was approved. Start the sign-in again for a new code.")
 
 
@@ -118,7 +118,7 @@ def cameras(site, token):
     if status == 401:
         raise NotSignedIn(d.get("error") or "This computer isn't signed in any more. Sign in again.")
     if status != 200:
-        raise LinkError(f"Couldn't get your cameras (the server answered {status}). Try again in a minute.")
+        raise LinkError(f"Couldn't get your cameras from YonderView (it answered {status}). Try again in a minute.")
     return d.get("cameras") or []
 
 
@@ -132,4 +132,5 @@ def connect(site, token, slug, replace=False):
         return "confirm", d.get("error", ""), None
     if status == 401:
         raise NotSignedIn(d.get("error") or "This computer isn't signed in any more. Sign in again.")
-    raise LinkError(d.get("error") or f"Couldn't get the camera's settings (the server answered {status}).")
+    raise LinkError(d.get("error") or f"Couldn't get the camera's connection settings (YonderView answered {status}). "
+                                     "Try again in a minute.")

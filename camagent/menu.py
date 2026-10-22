@@ -12,16 +12,18 @@ def _elevate_or_explain() -> bool:
     if service.is_admin():
         return True
     if os.name == "nt":
-        print("CamAgent needs administrator rights to read and change its settings.")
+        print("CamAgent needs administrator rights, because its settings hold your camera passwords.")
         if input("Reopen as administrator? (Y/n): ").strip().lower() in ("", "y", "yes"):
             import ctypes
             ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, "-I -m camagent",
                                                        str(config.base_dir()), 1)
             if ret > 32:
                 return False                 # the new window takes over
-            print("Windows didn't allow it. Right-click Command Prompt, choose \"Run as administrator\", and type: camagent")
+            print("Windows didn't allow it. Instead: right-click the CamAgent shortcut in the Start menu (or Command Prompt),")
+            print("choose \"Run as administrator\", and (in Command Prompt) type: camagent")
         return False
-    print("CamAgent needs administrator (root) rights to read and change its settings. Type:  sudo camagent")
+    print("CamAgent needs administrator (root) rights, because its settings hold your camera passwords.")
+    print("Open it like this instead:  sudo camagent")
     return False
 
 
@@ -44,7 +46,7 @@ def show_log(lines=40):
             with open(path, encoding="utf-8", errors="replace") as f:
                 tail = deque(f, maxlen=lines)
         except OSError:
-            print("No log yet: CamAgent hasn't run in the background. Choose 5 in the menu to start it.")
+            print("There's no log yet, because CamAgent hasn't run in the background. Choose 5 in the menu to start it.")
             return
         print(f"--- last {lines} lines of {path} ---")
         print("".join(tail).rstrip())
@@ -54,11 +56,14 @@ def show_log(lines=40):
 
 def _discover():
     from .camera import discover
-    print("Searching the network (3 seconds)...")
+    print("Searching this network for cameras (3 seconds)...")
     cams = discover()
     if not cams:
         print("No cameras answered. Check that the camera is on, on the same network as this computer, and has")
-        print("ONVIF turned on in its settings (the standard CamAgent uses to talk to it).")
+        print("ONVIF turned on in its web page (ONVIF is the standard way CamAgent talks to cameras).")
+        print("You can still add a camera by typing its IP address during setup.")
+    else:
+        print(f"Found {len(cams)} camera{'s' if len(cams) != 1 else ''} (IP address:port, then its name):")
     for c in cams:
         print(f"  {c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip())
 
@@ -70,7 +75,7 @@ def installed_version():
     try:
         out = subprocess.run([sys.executable, "-I", "-m", "camagent", "version"], capture_output=True, text=True,
                              timeout=30)
-        return out.stdout.strip() or __version__
+        return out.stdout.strip().split()[-1] if out.stdout.strip() else __version__   # "camagent 0.16.1" -> "0.16.1"
     except Exception:  # noqa: BLE001
         return __version__
 
@@ -139,7 +144,8 @@ def _do(label, action):
         print("\nCancelled. Nothing was changed.")
     except Exception as e:  # noqa: BLE001
         print(f"Something went wrong: {e}")
-        print('"Check for problems" in the menu may show why.')
+        print('Choose "Check for problems" (4) in the menu to look for the cause. Still stuck? Use "Report a problem"')
+        print("on yonderview.net and include the message above.")
 
 
 def _choose(title, actions, back="Quit"):
@@ -188,13 +194,16 @@ def _status_lines(cams, state, problems, config_path=None):
     n = len(cams)
     lines = [f"{n} camera{'s' if n != 1 else ''}  |  {running}  |  YonderView: {_account_label(config_path)}"]
     if problems:
-        lines.append(f"! There's a problem with the settings ({len(problems)}). Choose 4 to see it.")
+        n_p = len(problems)
+        lines.append(f"! {n_p} problem{'s' if n_p != 1 else ''} with the saved settings. Choose 4 (Check for problems)"
+                     " to see what's wrong and how to fix it.")
     elif not cams:
         lines.append("No cameras yet. Choose 2 to add one.")
     elif state == "not installed":
-        lines.append("Choose 5 to start CamAgent, so it runs in the background and starts with the computer.")
+        lines.append("Next: choose 5 to start CamAgent. It then keeps sending your cameras in the background and")
+        lines.append("starts by itself whenever this computer turns on.")
     elif state == "stopped":
-        lines.append("Choose 5 to start it again.")
+        lines.append("CamAgent is stopped, so your cameras aren't being sent. Choose 5 to start it again.")
     return lines
 
 
@@ -236,7 +245,7 @@ def run(config_path=None):
             ("Check for problems", lambda: doctor.run(config_path)),
             ("Restart CamAgent" if installed else "Start CamAgent (runs in the background, starts with the computer)",
              service.restart if installed else (lambda: service.install(config_path))),
-            ("Show the recent log", show_log),
+            ("Show the recent log (useful for support)", show_log),
             ("Settings", None),
             ("Sign out of YonderView" if signed_in else "Sign in to YonderView",
              (lambda: _sign_out(config_path)) if signed_in else (lambda: configure.account_token(config_path))),

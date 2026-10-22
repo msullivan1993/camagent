@@ -141,7 +141,9 @@ def detect(ffmpeg, methods=None, show=None, size="3840x2160", timeout=60):
             speed = try_method(ffmpeg, m, clip, timeout=timeout)
             out.append((m, speed))
             if show:
-                show(f"  {LABELS[m]}: " + (f"works ({speed}x real time on a 4K test clip)" if speed else "not available here"))
+                clip_name = "4K" if size == "3840x2160" else ("1080p" if size == "1920x1080" else size)
+                show(f"  {LABELS[m]}: " + (f"works ({speed}x real time on a {clip_name} test clip)" if speed
+                                           else "doesn't work on this computer"))
     return out
 
 

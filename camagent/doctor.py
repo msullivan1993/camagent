@@ -43,9 +43,10 @@ def _service_state() -> str:
 def run(config_path=None, camera_id=None):
     r = Report()
     path = config.default_config_path() if not config_path else config_path
-    admin_hint = "an administrator Command Prompt or PowerShell" if os.name == "nt" else "sudo"
+    admin_hint = ("an administrator Command Prompt or PowerShell (or the CamAgent shortcut in the Start menu)"
+                  if os.name == "nt" else "sudo (type: sudo camagent doctor)")
     print(f"CamAgent {__version__}: checking for problems")
-    print("[FAIL] stops a camera working; [WARN] is worth fixing but not urgent.\n")
+    print("[ OK ] is fine. [FAIL] stops a camera from working. [WARN] is worth fixing, but not urgent.\n")
 
     # --- software ---
     v = sys.version_info
@@ -58,7 +59,7 @@ def run(config_path=None, camera_id=None):
     try:
         main, cams, problems = config.load_all(path)
     except PermissionError:
-        r.line(FAIL, "Settings file", f"can't read {path}", f"run this from {admin_hint}")
+        r.line(FAIL, "Settings file", f"can't read {path} without administrator rights", f"run this from {admin_hint}")
         return _summary(r)
     except Exception as e:
         r.line(FAIL, "Settings file", f"can't read {path} ({e})", "fix the file, or set the camera up again: " + CHANGE)
@@ -66,12 +67,13 @@ def run(config_path=None, camera_id=None):
     for p in problems:
         r.line(FAIL, "Camera settings file", p, "fix or remove that file, or set the camera up again: " + CHANGE)
     if not cams:
-        r.line(FAIL, "Cameras", "none set up yet", "open CamAgent and choose Add a camera")
+        r.line(FAIL, "Cameras", "none set up on this computer yet", "open CamAgent and choose Add a camera")
         return _summary(r)
     if camera_id:
         cams = [c for c in cams if c["platform"]["camera_id"] == camera_id]
         if not cams:
-            r.line(FAIL, "Camera", f"'{camera_id}' isn't set up on this computer", "open CamAgent and choose See my cameras")
+            r.line(FAIL, "Camera", f"'{camera_id}' isn't set up on this computer",
+                   "open CamAgent and choose See my cameras to see their names")
             return _summary(r)
     else:
         r.line(OK, "Cameras", f"{len(cams)} set up")
@@ -83,19 +85,24 @@ def run(config_path=None, camera_id=None):
             first = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True, timeout=10).stdout.splitlines()[0]
         except Exception:
             first = ffmpeg
-        r.line(OK, "ffmpeg", first)
+        r.line(OK, "ffmpeg (video tool)", first)
         from . import prereqs
         if not prereqs.admin_only_location(ffmpeg):
-            r.line(FAIL, "ffmpeg location", f"{ffmpeg} is in a folder normal users can change (the service runs it "
-                   "as SYSTEM)", "winget install -e --id Gyan.FFmpeg --scope machine, then run setup again")
+            r.line(FAIL, "ffmpeg location", f"{ffmpeg} is in a folder any user of this computer can change, and "
+                   "CamAgent runs it with full system rights (a security risk)",
+                   "install it for all users. In an administrator window type: winget install -e --id Gyan.FFmpeg "
+                   f"--scope machine. Then: {CHANGE}")
         if not prereqs.admin_only_location(sys.base_prefix):
-            r.line(FAIL, "Python location", f"camagent's Python ({sys.base_prefix}) is in a folder normal users "
-                   "can change", "reinstall with the current installer (it installs Python for all users)")
+            r.line(FAIL, "Python location", f"CamAgent's Python ({sys.base_prefix}) is in a folder any user of this "
+                   "computer can change (a security risk)",
+                   "run the current CamAgent installer again (it installs Python for all users)")
         if prereqs.srt_supported(ffmpeg) is False:
-            r.line(FAIL, "ffmpeg SRT support", "this ffmpeg build can't send SRT",
-                   "install a full build (Windows: winget install -e --id Gyan.FFmpeg --scope machine)")
+            r.line(FAIL, "ffmpeg SRT support", "this copy of ffmpeg can't send video the way YonderView receives it "
+                   "(it was built without SRT)",
+                   "install the full version (Windows: winget install -e --id Gyan.FFmpeg --scope machine; "
+                   "Linux: sudo apt install ffmpeg)")
     else:
-        r.line(FAIL, "ffmpeg", "not found", camera.ffmpeg_install_hint())
+        r.line(FAIL, "ffmpeg (video tool)", "not found; CamAgent needs it to send video", camera.ffmpeg_install_hint())
     ffprobe = camera.find_ffprobe(ffmpeg)
 
     for cfg in cams:
@@ -105,7 +112,8 @@ def run(config_path=None, camera_id=None):
     from . import prereqs
     mins = prereqs.sleep_minutes()
     if mins:
-        r.line(WARN, "Sleep", f"this computer sleeps after {mins} minutes on AC power",
+        r.line(WARN, "Sleep", f"this computer goes to sleep after {mins} minutes (plugged in), which takes "
+               "the cameras offline",
                "Settings > System > Power > Screen and sleep > Sleep: Never (while plugged in);"
                " or type: powercfg /change standby-timeout-ac 0")
 
@@ -116,9 +124,10 @@ def run(config_path=None, camera_id=None):
         if auto and sched:
             r.line(OK, "Automatic updates", "on (nightly)")
         elif auto:
-            r.line(WARN, "Automatic updates", "on, but not scheduled yet", "open CamAgent and choose Start CamAgent")
+            r.line(WARN, "Automatic updates", "on, but the nightly check isn't set up yet",
+                   "open CamAgent and choose Start CamAgent (if it's already running: Updates > Update CamAgent now)")
         else:
-            r.line(WARN, "Automatic updates", "off", "open CamAgent > Updates")
+            r.line(WARN, "Automatic updates", "off", "to turn them on: open CamAgent > Updates")
         logf = config.base_dir() / "logs" / "update.log"
         if logf.exists():
             last = logf.read_text(encoding="utf-8").strip().splitlines()[-1:]
@@ -133,10 +142,12 @@ def run(config_path=None, camera_id=None):
     if state == "running":
         r.line(OK, "Running in the background", "yes")
     elif state == "not installed":
-        r.line(WARN, "Running in the background", "not yet", "open CamAgent and choose Start CamAgent")
+        r.line(WARN, "Running in the background", "not yet, so no camera is being sent",
+               "open CamAgent and choose Start CamAgent")
     else:
-        r.line(FAIL, "Running in the background", state, "open CamAgent and choose Restart CamAgent. Still failing? Choose Show the recent log and send it "
-                   "to support (Report a problem on yonderview.net)")
+        r.line(FAIL, "Running in the background", f"no ({state}), so no camera is being sent",
+               "open CamAgent and choose Restart CamAgent. Still failing? Choose Show the recent log and send it "
+               "to support (Report a problem on yonderview.net)")
 
     return _summary(r)
 
@@ -160,10 +171,12 @@ def _check_convert(r, cfg, cid):
     if speed:
         r.line(OK, "Converting to 1080p", f"{convert.LABELS[method]} works ({speed}x real time on a 4K test clip)")
     elif method == "x264":
-        r.line(FAIL, "Converting to 1080p", "the CPU conversion doesn't work", "reinstall ffmpeg")
+        r.line(FAIL, "Converting to 1080p", "converting on the processor (CPU) doesn't work",
+               f"reinstall ffmpeg: {camera.ffmpeg_install_hint()}")
     else:
-        r.line(WARN, "Converting to 1080p", f"{convert.LABELS[method]} doesn't work here any more (the service "
-               "falls back to the CPU)", f"update the graphics driver, or check again: {CHANGE}")
+        r.line(WARN, "Converting to 1080p", f"{convert.LABELS[method]} doesn't work on this computer any more "
+               "(CamAgent uses the processor instead: it works, but may stutter)",
+               f"update the graphics driver, or check again: {CHANGE}")
 
 
 def _check_camera(r, cfg, ffprobe):
@@ -173,15 +186,15 @@ def _check_camera(r, cfg, ffprobe):
     from .agent import missing_settings
     missing = missing_settings(cfg)
     if missing:
-        r.line(FAIL, "Settings", "missing " + ", ".join(missing), "open CamAgent > Change or remove a camera > Change a camera's settings")
+        r.line(FAIL, "Settings", "missing " + ", ".join(missing), f"set the camera up again: {CHANGE}")
 
     if cam.get("host") and cam.get("ptz", True):
         try:
             info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
             r.line(OK, "Camera connection", f"{info['manufacturer']} {info['model']} at {cam['host']}")
             if not any(p["ptz"] for p in info["profiles"]):
-                r.line(WARN, "Camera controls", "this camera doesn't offer pan/tilt/zoom (PTZ)",
-                       "if it's a fixed camera, turn PTZ off: open CamAgent > Change or remove a camera > Change a camera's settings")
+                r.line(WARN, "Camera controls", "remote turn and zoom (PTZ) is on, but this camera doesn't offer it",
+                       f"if the camera doesn't turn or zoom, answer No to PTZ in: {CHANGE}")
         except Exception as e:
             msg = camera.friendly_error(e)
             if "login rejected" in msg:
@@ -196,7 +209,7 @@ def _check_camera(r, cfg, ffprobe):
 
     if cam.get("rtsp_url"):
         if not ffprobe:
-            r.line(WARN, "Camera video", "can't check it (ffmpeg isn't installed)")
+            r.line(WARN, "Camera video", "can't check it (ffmpeg isn't installed)", camera.ffmpeg_install_hint())
         else:
             streams = camera.probe(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
             if streams:
@@ -227,7 +240,7 @@ def _check_camera(r, cfg, ffprobe):
     if host:
         try:
             ip = socket.gethostbyname(host)
-            r.line(OK, "YonderView video server", f"{host} resolves to {ip}")
+            r.line(OK, "YonderView video server", f"found {host} ({ip})")
         except OSError:
             r.line(FAIL, "YonderView video server", f"can't find {host}", "check this computer's internet connection")
 
@@ -235,14 +248,16 @@ def _check_camera(r, cfg, ffprobe):
         from .configure import test_mqtt
         ok, msg = test_mqtt(cfg)
         if ok:
-            r.line(OK, "YonderView camera controls", f"{plat['mqtt_host']}: {msg}")
+            r.line(OK, "YonderView connection", f"{plat['mqtt_host']}: {msg}")
             declined = (cfg.get("_server") or {}).get("declined")
             if declined:
                 r.line(FAIL, "YonderView", f"video declined: {declined}",
-                       "change the camera's stream, then use 'Check again now' on the camera's page")
+                       "change what it says (in the camera's web page, or: " + CHANGE + "), then click "
+                       "'Check again now' on the camera's page on yonderview.net")
         else:
-            r.line(FAIL, "YonderView camera controls", msg,
-                   "generate a new settings block on the camera's Connection page on yonderview.net, then open CamAgent > Change or remove a camera > Change a camera's settings")
+            r.line(FAIL, "YonderView connection", msg,
+                   "if this computer's internet works, get fresh connection settings: " + CHANGE
+                   + " (sign in, or paste a new settings block from the camera's Connection page on yonderview.net)")
 
     if cam.get("rtsp_url") and ffprobe:
         m = camera.measure_stream(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
@@ -250,7 +265,7 @@ def _check_camera(r, cfg, ffprobe):
             r.line(OK, "Video measured", camera.stream_summary(m))
         limit = (cfg.get("_server") or {}).get("max_height")
         for tip in camera.stream_advice(m, limit):
-            r.line(FAIL if "would be declined" in tip or "needs one" in tip else WARN, "Stream", tip)
+            r.line(FAIL if "would be declined" in tip or "needs one" in tip else WARN, "Camera video settings", tip)
 
 
 def _summary(r: Report):

@@ -69,7 +69,8 @@ def tempest_discover(seconds=15):
     try:
         s = tempest_socket()
     except OSError as e:
-        raise RuntimeError(f"can't listen for Tempest broadcasts (UDP {TEMPEST_PORT}): {e}")
+        raise RuntimeError(f"CamAgent can't listen for the Tempest hub on this computer (UDP port {TEMPEST_PORT}; another "
+                           f"program may be using it, or a firewall is blocking it): {e}")
     with s:
         while time.time() < end:
             try:

@@ -1,9 +1,9 @@
 """camagent command line. Run `camagent` on its own for a menu.
 
-  camagent add                set up another camera on this machine
+  camagent add                set up another camera on this computer
   camagent configure [CAM]    change a camera's settings (or set up the first one)
   camagent list               every camera here, with live status
-  camagent remove [CAM]       stop sending a camera from this machine
+  camagent remove [CAM]       stop sending a camera from this computer
   camagent run                run the agent in the foreground (what the service runs)
   camagent discover           list ONVIF cameras on the network
   camagent signin             sign this computer in to your YonderView account
@@ -12,7 +12,7 @@
   camagent install-service    install and start the system service
   camagent uninstall-service  remove the system service
   camagent restart            restart the service
-  camagent update             update from Git and restart
+  camagent update             install the latest signed release and restart
   camagent version
 """
 import argparse
@@ -54,7 +54,7 @@ def main(argv=None):
     pr.add_argument("--test-moves", action="store_true", help="also check that absolute moves work (turns the camera)")
     fx = sub.add_parser("fix-stream", help="set a camera's video to what YonderView needs: H.264, up to 1080p, a keyframe every 2 s (asks first)")
     fx.add_argument("camera", nargs="?")
-    sub.add_parser("version", help="print the version")
+    sub.add_parser("version", help="show which version of CamAgent is installed")
 
     # allow --config after the subcommand too
     for p in sub.choices.values():
@@ -91,7 +91,7 @@ def main(argv=None):
             else:
                 configure.remove(cfg_path, args.camera)
         except (KeyboardInterrupt, EOFError):
-            print("\nCancelled; nothing saved.")
+            print("\nCancelled. Nothing was saved.")
 
     elif args.cmd in ("signin", "signout"):
         from . import configure, link
@@ -105,7 +105,7 @@ def main(argv=None):
         except link.LinkError as e:
             raise SystemExit(str(e))
         except (KeyboardInterrupt, EOFError):
-            print("\nCancelled.")
+            print("\nCancelled. Nothing was changed.")
 
     elif args.cmd == "list":
         from .configure import list_cameras
@@ -115,7 +115,8 @@ def main(argv=None):
         from .camera import discover
         cams = discover()
         if not cams:
-            print("No cameras answered. Check the camera is on, on this network, and has ONVIF turned on.")
+            print("No cameras answered. Check that the camera is on, on the same network as this computer, and has")
+            print("ONVIF turned on in its web page (ONVIF is the standard way CamAgent talks to cameras).")
         for c in cams:
             print(f"{c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip())
 
