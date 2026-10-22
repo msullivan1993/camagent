@@ -95,9 +95,12 @@ def sign(tag):
         if pub not in (src / "camagent" / "release.py").read_text():
             sys.exit(f"{tag}'s camagent/release.py doesn't list this key, so agents running it couldn't update "
                      f"later. Add it to PUBLIC_KEYS first:\n  {pub}")
-        env = dict(os.environ, SOURCE_DATE_EPOCH=_git("show", "-s", "--format=%ct", tag))
-        subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", str(Path(d) / "dist"), str(src)],
-                       check=True, env=env, capture_output=True)
+        # the commit's time (not the tag's: an annotated tag's "git show" prints its message too)
+        env = dict(os.environ, SOURCE_DATE_EPOCH=_git("log", "-1", "--format=%ct", f"{tag}^{{commit}}"))
+        built = subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", str(Path(d) / "dist"), str(src)],
+                               env=env, capture_output=True, text=True)
+        if built.returncode:
+            sys.exit("Building the package failed:\n" + (built.stdout + built.stderr)[-3000:])
         wheel = Path(d) / "dist" / f"camagent-{version}-py3-none-any.whl"
         if not wheel.exists():
             sys.exit(f"The build didn't make {wheel.name}.")
