@@ -12,6 +12,7 @@ import time
 import urllib.request
 
 TEMPEST_PORT = 50222
+HUB_RELEARN_S = 600        # the hub silent this long (e.g. it got a new address): accept the station from a new sender
 
 
 def dewpoint(temp_c, rh):
@@ -245,6 +246,7 @@ class Reader:
         self.uid = self.serial if self.kind == "tempest" else ""
         self._sock = None
         self._hub = wcfg.get("hub_ip", "")
+        self._hub_heard = time.time() if self._hub else 0.0
         self._day = TempestDay()
 
     def station_id(self):
@@ -283,9 +285,9 @@ class Reader:
                     continue
                 # the first matching packet's sender is the hub; after that, only it (another computer on the
                 # network can't feed made-up readings by sending the station's serial number)
-                if self._hub and addr[0] != self._hub:
+                if self._hub and addr[0] != self._hub and time.time() - self._hub_heard < HUB_RELEARN_S:
                     continue
-                self._hub = addr[0]
+                self._hub, self._hub_heard = addr[0], time.time()   # (re-learned if the hub went quiet: new address)
                 if not self.uid and msg.get("serial_number"):
                     self.uid = msg["serial_number"]
                 r = parse_tempest(msg, self._day, self.elevation)

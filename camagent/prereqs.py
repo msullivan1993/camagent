@@ -31,7 +31,8 @@ def admin_only_location(path) -> bool:
         return True
     p = os.path.normcase(os.path.abspath(path))
     roots = [os.environ.get("ProgramFiles", ""), os.environ.get("ProgramFiles(x86)", ""),
-             os.environ.get("ProgramW6432", ""), os.environ.get("SystemRoot", ""),
+             os.environ.get("ProgramW6432", ""),
+             # not all of C:\\Windows: users can write in some of its folders (Temp, Tasks, tracing...)
              os.path.join(os.environ.get("PROGRAMDATA", r"C:\ProgramData"), "camagent")]
     return any(r and p.startswith(os.path.normcase(os.path.abspath(r)) + os.sep) for r in roots)
 

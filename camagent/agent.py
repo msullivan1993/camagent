@@ -128,9 +128,9 @@ class CameraAgent:
             ts = cmd.get("ts")
             if not isinstance(ts, (int, float)):
                 raise RuntimeError("command without a time; ignored")      # the website always sends one
-            age = time.time() - float(ts)
-            if age > float(self.cfg["agent"].get("stale_command_s", 5)) or age < -60:
-                raise RuntimeError("command too old (or from the future); ignored")
+            # (a command "from the future" is accepted, as before: this PC's clock may simply be behind)
+            if time.time() - float(ts) > float(self.cfg["agent"].get("stale_command_s", 5)):
+                raise RuntimeError("command too old; ignored")
             result = self._handle(cmd)
             if cmd.get("op") != "move":
                 self.log.info("command: %s", cmd.get("op"))

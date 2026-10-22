@@ -100,9 +100,16 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False):
         raise SystemExit("Set [update] repo in the config to your repository URL first.")
 
     if not auto:
-        ref = ref or cfg["update"].get("ref") or latest_release(repo)
+        asked = ref or cfg["update"].get("ref")
+        ref = asked or latest_release(repo)
         if not ref:
             raise SystemExit("Couldn't find the latest release (GitHub didn't answer). Try again later.")
+        if re.fullmatch(r"\d+\.\d+\.\d+", ref):
+            ref = "v" + ref                          # "0.16.1" means the release v0.16.1
+        if not asked and not unsigned and version_tuple(ref) < version_tuple(__version__):
+            # "latest" older than what's installed: someone may be trying to push an old version. Only on request.
+            raise SystemExit(f"The latest release ({ref}) is older than this one ({__version__}); not going back. "
+                             f"To install it anyway: camagent update --ref {ref}")
         if unsigned:
             print(f"Installing camagent from {ref} ({repo}) WITHOUT checking its signature (--unsigned)...")
             print(f"Installed: {_install_unsigned(repo, ref)}")

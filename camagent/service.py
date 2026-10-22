@@ -193,6 +193,12 @@ def refresh_unit(config_path=None):
         return
     UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
     _run(["systemctl", "daemon-reload"], check=False)
+    # Updates from 0.15 run this (the new code) but not the new updater: move the sign-in to its root-only file here
+    try:
+        from .config import migrate_account
+        migrate_account(config_path)
+    except Exception:  # noqa: BLE001 - never stop an update over this; the menu and later updates try again
+        pass
 
 
 def restart():

@@ -28,22 +28,29 @@ function Winget-Install($id) {
     }
     # for all users (Program Files): the service runs these as SYSTEM, so a normal user mustn't be able to change them
     winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent
+    if ($LASTEXITCODE -ne 0) { Write-Host "    (winget said $LASTEXITCODE for $id; it may already be installed for one user only)" }
     Refresh-Path
 }
 
+function Test-AllUsersPath($path) {
+    # under Program Files: only administrators can change it (the service runs it as SYSTEM)
+    $pf = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+    return [bool]($pf | Where-Object { $path.ToLower().StartsWith($_.ToLower() + "\") })
+}
+
 function Find-Python {
-    foreach ($cmd in @(@("py", "-3.12"), @("py", "-3"), @("python"))) {
-        if (Get-Command $cmd[0] -ErrorAction SilentlyContinue) {
-            $args_ = @($cmd | Select-Object -Skip 1) + @("-c", "import sys;print(sys.executable if sys.version_info>=(3,11) else '')")
-            $exe = & $cmd[0] @args_ 2>$null
-            if ($LASTEXITCODE -eq 0 -and $exe) {
-                $exe = $exe.Trim()
-                # only a Python installed for all users: one in a user's profile could be changed by that user
-                $pf = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
-                if ($pf | Where-Object { $exe.ToLower().StartsWith($_.ToLower() + "\") }) { return $exe }
-                Write-Host "    (skipping $exe : not installed for all users)"
-            }
-        }
+    # Every Python the launcher knows (py -0p), plus "python" on the PATH; only one installed for all users,
+    # version 3.11 or newer. (A per-user Python is skipped: its user could change what runs as SYSTEM.)
+    $cands = @()
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+        $cands += (& py -0p 2>$null) | ForEach-Object { if ($_ -match '([A-Za-z]:\\.+?python\.exe)\s*$') { $Matches[1] } }
+    }
+    $p = Get-Command python -ErrorAction SilentlyContinue
+    if ($p) { $cands += $p.Source }
+    foreach ($exe in $cands | Select-Object -Unique) {
+        if (-not (Test-AllUsersPath $exe)) { Write-Host "    (skipping $exe : not installed for all users)"; continue }
+        $ok = & $exe -c "import sys;print(1 if sys.version_info>=(3,11) else 0)" 2>$null
+        if ($LASTEXITCODE -eq 0 -and "$ok".Trim() -eq "1") { return $exe }
     }
     return $null
 }
@@ -62,7 +69,7 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Winget-Install "Git.
 
 Write-Host "==> Checking ffmpeg"
 $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
-if (-not $ff -or -not $ff.Source.ToLower().StartsWith($env:ProgramFiles.ToLower() + "\")) { Winget-Install "Gyan.FFmpeg" }
+if (-not $ff -or -not (Test-AllUsersPath $ff.Source)) { Winget-Install "Gyan.FFmpeg" }
 
 if (-not $Ref) {
     try {
@@ -76,20 +83,32 @@ Write-Host "==> Installing camagent from $Repo ($Ref)"
 # The folder holds passwords and the code the service runs as SYSTEM: lock it to Administrators and SYSTEM
 # *before* anything goes in it (a folder a normal user made first would stay theirs to change).
 if (Test-Path $Base) {
-    $owner = (Get-Acl $Base).Owner
-    if ($owner -notmatch "Administrators|SYSTEM|TrustedInstaller") {
-        throw "$Base already exists and belongs to $owner, not Administrators. Delete it (or check who made it), then run this again."
+    # by SID (names differ by language): Administrators, SYSTEM or TrustedInstaller
+    $owner = (Get-Acl $Base).GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($owner -notin @("S-1-5-32-544", "S-1-5-18", "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")) {
+        throw "$Base already exists and isn't owned by Administrators ($owner). Delete it (or check who made it), then run this again."
     }
 } else {
     New-Item -ItemType Directory -Force -Path $Base | Out-Null
 }
+# lock the folder first, then make everything inside take its permissions, then make Administrators the owner
+icacls $Base /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
+if (Get-ChildItem $Base -Force -ErrorAction SilentlyContinue) { icacls "$Base\*" /reset /T /C /Q | Out-Null }
 icacls $Base /setowner "*S-1-5-32-544" /T /C /Q | Out-Null
-icacls $Base /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
-icacls $Base /reset /T /C /Q | Out-Null     # everything inside takes the folder's permissions
-icacls $Base /inheritance:r /grant:r "*S-1-5-32-544:(OI)(CI)F" "*S-1-5-18:(OI)(CI)F" | Out-Null
 New-Item -ItemType Directory -Force -Path $Bin | Out-Null
-$venvPy = Join-Path $Base "venv\Scripts\python.exe"
-if (-not (Test-Path $venvPy)) { & $py -m venv (Join-Path $Base "venv") }
+$venv = Join-Path $Base "venv"
+$venvPy = Join-Path $venv "Scripts\python.exe"
+$cfgFile = Join-Path $venv "pyvenv.cfg"
+$venvHome = $null
+if (Test-Path $cfgFile) {
+    foreach ($line in Get-Content $cfgFile) { if ($line -match '^home\s*=\s*(.+)$') { $venvHome = $Matches[1].Trim() } }
+}
+if ((Test-Path $cfgFile) -and -not ($venvHome -and (Test-AllUsersPath $venvHome))) {
+    Write-Host "    the old program folder was made from a Python in a user's profile: making it again"
+    Stop-Service -Name camagent -ErrorAction SilentlyContinue      # it runs from that folder
+    Remove-Item -Recurse -Force $venv
+}
+if (-not (Test-Path $venvPy)) { & $py -m venv $venv }
 & $venvPy -m pip install -q --upgrade pip
 & $venvPy -m pip install -q --upgrade "camagent @ git+$Repo@$Ref"
 & $venvPy -m pip install -q --upgrade --force-reinstall --no-deps "camagent @ git+$Repo@$Ref"

@@ -88,6 +88,19 @@ with mock.patch.object(update.service, "_require_admin"), \
     except SystemExit as e:
         assert "--unsigned" in str(e)
 
+# by hand: "latest" older than this version isn't installed unless asked for by name; "0.16.1" means v0.16.1
+with mock.patch.object(update.service, "_require_admin"), mock.patch.object(update, "latest_release", return_value="v0.1.0"):
+    try:
+        update.run(None)
+        raise AssertionError("went back to an older release")
+    except SystemExit as e:
+        assert "not going back" in str(e)
+with mock.patch.object(update.service, "_require_admin"), mock.patch.object(update, "_install", return_value="x") as inst, \
+        mock.patch.object(update, "_refresh_unit"), mock.patch.object(update.service, "restart"), \
+        mock.patch.object(update.service, "is_installed", return_value=False):
+    update.run(None, ref="0.16.1")
+    assert inst.call_args[0][1] == "v0.16.1"
+
 # 4. What the website asks for is checked before it reaches ffmpeg
 ok, mark = V.clean_request([{"suffix": "720", "height": 720, "fps": 30, "kbps": 3000},
                             {"suffix": "480", "height": "480", "kbps": 999999}],
@@ -116,6 +129,13 @@ if os.name != "nt":
         main.write_text(main.read_text() + '\n[account]\ntoken = "yva_old"\nname = ""\n')
         config.migrate_account(main)
         assert "yva_old" not in main.read_text() and config.load(main)["account"]["token"] == "yva_old"
+        # an update from 0.15 runs only service.refresh_unit from the new code: that moves it too
+        acct.unlink()
+        main.write_text(main.read_text() + '\n[account]\ntoken = "yva_015"\nname = ""\n')
+        unit = Path(d) / "camagent.service"; unit.write_text("old")
+        with mock.patch.object(service, "UNIT_PATH", unit), mock.patch.object(service, "_run"):
+            service.refresh_unit(main)
+        assert "yva_015" not in main.read_text() and config.load(main)["account"]["token"] == "yva_015"
 
 # 6. Tempest: only from the local network, and only from the hub once it's known
 assert weather._from_lan(("192.168.1.20", 50222)) and not weather._from_lan(("8.8.8.8", 50222))
@@ -140,6 +160,9 @@ assert r.read(wait=1) and r._hub == "192.168.1.20"
 fake = dict(obs, obs=[[int(time.time()), 0, 1, 99, 0, 3, 1000, 20, 50, 100, 1, 50, 0, 0, 0, 0, 2.6, 1]])
 r._sock = FakeSock([(json.dumps(fake).encode(), ("192.168.1.66", 1))])  # another computer: ignored
 assert r.read(wait=0.2) is None
+r._hub_heard -= weather.HUB_RELEARN_S + 1                               # the hub went quiet (a new address)
+r._sock = FakeSock([(json.dumps(obs).encode(), ("192.168.1.21", 1))])
+assert r.read(wait=1) and r._hub == "192.168.1.21"
 
 # 7. Windows: an ffmpeg a normal user could replace isn't picked when an admin-only one exists
 env = {"ProgramFiles": r"C:\Program Files", "ProgramFiles(x86)": r"C:\Program Files (x86)", "SystemRoot": r"C:\Windows",
@@ -151,6 +174,7 @@ with mock.patch.object(prereqs, "WINDOWS", True), mock.patch.dict(os.environ, en
     assert not prereqs.admin_only_location(r"C:\Users\mike\AppData\Local\Microsoft\WinGet\ffmpeg.exe")
     assert not prereqs.admin_only_location(r"C:\ffmpeg\bin\ffmpeg.exe")
     assert prereqs.admin_only_location(r"C:\ProgramData\camagent\venv\Scripts\python.exe")
+    assert not prereqs.admin_only_location(r"C:\Windows\Temp\ffmpeg.exe")          # users can write there
     assert not prereqs.admin_only_location(r"C:\ProgramData\other\ffmpeg.exe")
 
 # 8. The Linux service is sandboxed: read-only system, no new privileges, no capabilities
@@ -169,9 +193,10 @@ sent = []
 client = mock.Mock(publish=lambda t, p, qos=0: sent.append(json.loads(p)))
 msg = lambda body: mock.Mock(topic="cam/x/cmd", payload=body if isinstance(body, bytes) else json.dumps(body).encode())
 a._on_message(client, None, msg({"op": "home", "req": "1"}))
-a._on_message(client, None, msg({"op": "home", "req": "2", "ts": time.time() + 3600}))
+a._on_message(client, None, msg({"op": "home", "req": "2", "ts": time.time() + 3600}))   # this PC's clock is behind
 a._on_message(client, None, msg(b"x" * (A.MAX_COMMAND_BYTES + 1)))
-a._on_message(client, None, msg({"op": "home", "req": "3", "ts": time.time()}))
-assert [s["ok"] for s in sent] == [False, False, False, True] and a._handle.call_count == 1
+a._on_message(client, None, msg({"op": "home", "req": "3", "ts": time.time() - 60}))      # stale
+a._on_message(client, None, msg({"op": "home", "req": "4", "ts": time.time()}))
+assert [s["ok"] for s in sent] == [False, True, False, False, True] and a._handle.call_count == 2
 
 print("OK")
