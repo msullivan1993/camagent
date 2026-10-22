@@ -179,7 +179,8 @@ with mock.patch.object(prereqs, "WINDOWS", True), mock.patch.dict(os.environ, en
 
 # 8. The Linux service is sandboxed: read-only system, no new privileges, no capabilities
 unit = service._linux_unit("/etc/camagent/camagent.toml")
-for line in ("NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "CapabilityBoundingSet=\n"):
+for line in ("NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "PrivateTmp=yes", "CapabilityBoundingSet=\n",
+             "TimeoutStopSec=15"):
     assert line in unit, line
 
 # 9. Commands need the website's time stamp, aren't from the future, and aren't huge
@@ -198,5 +199,26 @@ a._on_message(client, None, msg(b"x" * (A.MAX_COMMAND_BYTES + 1)))
 a._on_message(client, None, msg({"op": "home", "req": "3", "ts": time.time() - 60}))      # stale
 a._on_message(client, None, msg({"op": "home", "req": "4", "ts": time.time()}))
 assert [s["ok"] for s in sent] == [False, True, False, False, True] and a._handle.call_count == 2
+
+# 10. A camera whose alarm feed keeps failing ("NoSubscribe") is retried less and less often, at most hourly
+from camagent import controls as C
+waits = []
+
+
+class Stop:
+    def is_set(self):
+        return len(waits) >= 9
+
+    def wait(self, s):
+        waits.append(s)
+
+
+pull = mock.Mock(PullMessages=mock.Mock(side_effect=RuntimeError("NoSubscribe")))
+onvif = mock.Mock(create_pullpoint_service=mock.Mock(return_value=pull))
+c = C.Controls.__new__(C.Controls)
+c.p, c.caps, c.log = mock.Mock(onvif=onvif), {}, mock.Mock()
+c.watch_events(Stop(), lambda e: None)
+assert waits == [60, 120, 240, 480, 960, 1920, 3600, 3600, 3600], waits
+assert c.log.info.call_count < len(waits)                              # not one line per try
 
 print("OK")

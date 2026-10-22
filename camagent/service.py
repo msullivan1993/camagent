@@ -70,6 +70,9 @@ Environment=XDG_CACHE_HOME=/var/lib/camagent/cache
 ExecStart={sys.executable} -m camagent run --config {config_path}
 Restart=always
 RestartSec=5
+# CamAgent itself stops within 15 s; an ffmpeg stuck in a video driver can't be killed at all, so don't wait the
+# default 90 s for it on every restart (2026-10-22, Pi 3B: a leftover made each restart take 1.5 minutes)
+TimeoutStopSec=15
 # Sandbox (0.16): ffmpeg reads video from the network, so if a bad camera stream ever broke it, it still couldn't
 # change the system, read home folders, or gain privileges. It may write only its own /var/lib/camagent and a private
 # /tmp. Devices stay reachable for the hardware encoders (/dev/dri, /dev/video*).

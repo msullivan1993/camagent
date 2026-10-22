@@ -338,12 +338,20 @@ class Controls:
             self.log.info("camera alarms not available: %s", e)
             return
         self.caps["events"] = True
+        fails = 0
         while not stop.is_set():
             try:
                 got = pull.PullMessages({"Timeout": "PT30S", "MessageLimit": 20})
+                fails = 0
             except Exception as e:  # noqa: BLE001
-                self.log.info("camera alarm feed interrupted: %s; resubscribing in 60s", e)
-                stop.wait(60)
+                # some cameras accept the subscription but never deliver (e.g. "NoSubscribe"): wait longer each time
+                # (1, 2, 4... minutes, at most an hour) and log it now and then, not every minute
+                fails += 1
+                wait = min(60 * 2 ** (fails - 1), 3600)
+                if fails <= 3 or wait < 3600 or fails % 24 == 0:
+                    self.log.info("camera alarm feed interrupted: %s; trying again in %s", e,
+                                  f"{wait // 60} minute{'s' if wait != 60 else ''}")
+                stop.wait(wait)
                 try:
                     cam.create_events_service().CreatePullPointSubscription()
                     pull = cam.create_pullpoint_service()
