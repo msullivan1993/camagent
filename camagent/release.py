@@ -19,7 +19,7 @@ from . import config
 
 # Ed25519 public keys (raw 32 bytes, base64). More than one only while moving to a new key.
 PUBLIC_KEYS = [
-    "REPLACE_WITH_RELEASE_PUBLIC_KEY",
+    "ooa4QK2G7l08JCUW2CriBJSLECBHUNusIShwpJEOZHM=",     # Mike's release key, made 2026-10-21
 ]
 
 API = "https://api.github.com/repos/{owner}/{name}/releases/tags/{tag}"
