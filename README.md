@@ -84,7 +84,7 @@ Run `camagent` on its own (or the **CamAgent** Start menu shortcut on Windows) f
 everything, grouped by what you're doing:
 
 ```
-=== CamAgent 0.16.1 ===
+=== CamAgent 0.16.2 ===
 1 camera  |  CamAgent is running  |  YonderView: signed in as Mike
 
  Cameras
