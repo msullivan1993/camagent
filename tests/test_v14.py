@@ -55,9 +55,9 @@ assert V.Versions(c).method is None                     # a Pi's engine doesn't 
 c["stream"].update(pi_engine_versions=True)
 v = V.Versions(c)
 assert v.method == "v4l2m2m"
-v.wanted = json.dumps([[], None]); v.keep_until = time.time() + 600
+v.wanted = json.dumps([[], None]); v.keep_until = time.monotonic() + 600
 v.fast_fails = V.MAX_FAST_FAILS - 1
-v.started = time.time()
+v.started = time.monotonic()
 v.proc = mock.Mock(poll=mock.Mock(return_value=1))
 with mock.patch.object(v, "_start"):
     v._stop.wait = mock.Mock(side_effect=[False, True])        # one pass of the watch loop

@@ -299,7 +299,7 @@ class Versions:
         if not self.method or self.gave_up:
             return {"ok": False, "error": self.error or "this PC can't make versions"}
         with self._lock:
-            self.keep_until = time.time() + max(30, int(keep_s or 180))
+            self.keep_until = time.monotonic() + max(30, int(keep_s or 180))
             spec = json.dumps([versions, mark], sort_keys=True)
             if self.wanted != spec or not self.running():
                 self.wanted = spec
@@ -355,8 +355,9 @@ class Versions:
         self.log.info("making the %s copies with %s -> %s", ", ".join(o["suffix"] + "p" for o in outputs),
                       convert.LABELS.get(self.method, self.method), redact(outputs[0]["url"]))
         cmd[1:1] = ["-progress", "pipe:1", "-nostats"]       # its speed, to notice a PC that can't keep up
-        self.started, self.speed, self.slow_since = time.time(), None, None
-        self.frames, self.frame_at = 0, time.time()
+        # monotonic clock for these timers: a clock change (a Pi syncing its time) isn't a stall
+        self.started, self.speed, self.slow_since = time.monotonic(), None, None
+        self.frames, self.frame_at = 0, time.monotonic()
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, cwd=tempfile.gettempdir())
         threading.Thread(target=self._read_errors, args=(self.proc,), daemon=True).start()
@@ -370,7 +371,7 @@ class Versions:
                 except ValueError:
                     n = 0
                 if n > self.frames:
-                    self.frames, self.frame_at = n, time.time()
+                    self.frames, self.frame_at = n, time.monotonic()
             if line.startswith("speed="):
                 try:
                     self.speed = float(line.split("=", 1)[1].strip().rstrip("x"))
@@ -410,12 +411,12 @@ class Versions:
             with self._lock:
                 if self.wanted is None:
                     continue
-                if time.time() > self.keep_until:
+                if time.monotonic() > self.keep_until:
                     self.wanted = None
                     self._kill()
                     self.log.info("stopped making the lower-quality copies (nobody is watching them now)")
                     continue
-                if self.running() and time.time() - getattr(self, "frame_at", time.time()) > STUCK_S:
+                if self.running() and time.monotonic() - getattr(self, "frame_at", time.monotonic()) > STUCK_S:
                     # ffmpeg is connected but nothing comes out: a Raspberry Pi's engine left hung by an earlier
                     # interrupted run does this until the computer restarts. Say so; the server covers meanwhile.
                     self.error = ("the video engine stopped responding (restarting this computer usually fixes "
@@ -424,19 +425,19 @@ class Versions:
                     self.gave_up, self.wanted = time.time(), None
                     self._kill()
                     continue
-                if self.running() and time.time() - self.started > WARMUP_S and self.speed is not None:
+                if self.running() and time.monotonic() - self.started > WARMUP_S and self.speed is not None:
                     if self.speed >= SLOW_SPEED:
                         self.slow_since = None
                     elif self.slow_since is None:
-                        self.slow_since = time.time()
-                    elif time.time() - self.slow_since > SLOW_FOR_S:
+                        self.slow_since = time.monotonic()
+                    elif time.monotonic() - self.slow_since > SLOW_FOR_S:
                         self.error = f"this PC is too slow for these versions ({self.speed:.2f}x real time)"
                         self.log.warning("%s; YonderView's server will make them (trying again in an hour)", self.error)
                         self.gave_up, self.wanted = time.time(), None
                         self._kill()
                         continue
                 if self.proc and self.proc.poll() is not None:
-                    quick = time.time() - getattr(self, "started", 0) < FAST_S
+                    quick = time.monotonic() - getattr(self, "started", 0) < FAST_S
                     self.fast_fails = self.fast_fails + 1 if quick else 0
                     lite = f"{self.method}-lite"
                     if self.fast_fails >= MAX_FAST_FAILS and lite in GPU_METHODS:

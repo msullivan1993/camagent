@@ -25,7 +25,7 @@ class Uplink(threading.Thread):
         self.proc = None
         self._restart = threading.Event()
         self._halt = threading.Event()
-        self._last_frame_at = time.time()
+        self._last_frame_at = time.monotonic()        # monotonic: a clock change (a Pi syncing its time) isn't a stall
         self._stderr = collections.deque(maxlen=20)
         self._fast_fails = 0                      # converting: ffmpeg exits soon after starting, in a row
         self._audio_off_until = 0.0               # camera announces audio but sends none: video only until then
@@ -153,7 +153,7 @@ class Uplink(threading.Thread):
             if key != "progress":
                 continue
             try:
-                now = time.time()
+                now = time.monotonic()
                 frames = int(block.get("frame", "0") or 0)
                 if frames > self.stats["frames"]:
                     self._last_frame_at = now
@@ -206,7 +206,7 @@ class Uplink(threading.Thread):
 
             self.log.info("starting ffmpeg -> %s", redact(srt_url(self.cfg)))
             started = time.time()
-            self._last_frame_at = started
+            started_mono = self._last_frame_at = time.monotonic()
             self.stats.update(running=True, frames=0, sent_bytes=0, started_at=started)
             try:
                 self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -230,9 +230,9 @@ class Uplink(threading.Thread):
                     planned = True
                     self._kill()
                     break
-                if time.time() - started > stall:
+                if time.monotonic() - started_mono > stall:
                     self._check_audio_back()
-                if time.time() - self._last_frame_at > stall:
+                if time.monotonic() - self._last_frame_at > stall:
                     self.log.warning("no new frames for %ss; restarting ffmpeg", stall)
                     self._kill()
                     err_reader.join(3)               # its last words, e.g. which stream never got anything
@@ -259,10 +259,10 @@ class Uplink(threading.Thread):
             self.stats["last_error"] = self._stderr[-1] if self._stderr else f"exit code {code}"
             self.log.warning("ffmpeg exited (code %s); %s", code, self.stats["last_error"])
 
-            if time.time() - started > 60:      # it ran a while, so start the backoff over
+            if time.monotonic() - started_mono > 60:      # it ran a while, so start the backoff over
                 backoff = 1
                 self._fast_fails = 0
-            elif time.time() - started < 20 and self._encoder_trouble():
+            elif time.monotonic() - started_mono < 20 and self._encoder_trouble():
                 self._fast_fails += 1
             delay, backoff = backoff, min(backoff * 2, 60)
             self.log.info("restarting in %ss", delay)

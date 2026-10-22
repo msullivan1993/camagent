@@ -21,7 +21,7 @@ for i in range(1, 13):                      # 12 seconds: 25 frames/s, 500 kB/s 
     lines += [f"frame={25 * i}\n", "fps=17.0\n", f"total_size={500_000 * i}\n", "bitrate=999kbits/s\n",
               "speed=1x\n", "progress=continue\n"]
 clock = iter([1000.0 + i for i in range(1, 13)])
-with mock.patch("camagent.uplink.time.time", side_effect=lambda: next(clock)):
+with mock.patch("camagent.uplink.time.monotonic", side_effect=lambda: next(clock)):
     u._read_progress(mock.Mock(stdout=io.StringIO("".join(lines))))
 assert u.stats["fps"] == 25.0 and u.stats["fps_camera"] == 25.0, u.stats
 assert u.stats["bitrate_kbps"] == 4000.0, u.stats

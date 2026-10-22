@@ -85,7 +85,7 @@ with mock.patch("camagent.versions.find_ffmpeg", lambda p: str(fake)), \
     v.stop()
     assert not v.running()
     v.want(LADDER, MARK, keep_s=180)
-    v.keep_until = time.time() - 1                          # the website stopped asking
+    v.keep_until = time.monotonic() - 1                       # the website stopped asking
     time.sleep(2.5)
     assert not v.running() and v.wanted is None
     v.shutdown()
