@@ -30,6 +30,7 @@ class PTZ:
         self.last_activity = 0.0       # time of the last move or preset, so position is checked often then
         self.moves = 0                 # move/preset commands sent (to tell real position reports from fake ones)
         self.commanded = None          # last absolute position camagent sent (stands in for fake position reports)
+        self.reports_position = None   # what the camera says up front (ONVIF StatusPosition): True, False, or unknown
         self.onvif = self.source = None
 
     # ---------- connection ----------
@@ -69,6 +70,12 @@ class PTZ:
             self.log.warning("no ONVIF profile with PTZ found; PTZ disabled for this camera")
             return
         vsc = getattr(chosen, "VideoSourceConfiguration", None)
+        try:                                   # optional in ONVIF; many cameras don't answer it
+            caps = ptz.GetServiceCapabilities()
+            sp = getattr(caps, "StatusPosition", None)
+            self.reports_position = None if sp is None else bool(sp)
+        except Exception:  # noqa: BLE001
+            self.reports_position = None
         with self._lock:
             self.ptz, self.token, self.connected = ptz, chosen.token, True
             self.onvif = cam                                      # for imaging (focus, day/night) and device calls
@@ -187,7 +194,7 @@ class PTZ:
     def presets(self):
         self._require()
         try:
-            return [{"token": p.token, "name": getattr(p, "Name", "") or p.token}
+            return [dict({"token": p.token, "name": getattr(p, "Name", "") or p.token}, **_preset_position(p))
                     for p in self.ptz.GetPresets({"ProfileToken": self.token}) or []]
         except Exception as e:
             self._lost(e)
@@ -218,3 +225,17 @@ class PTZ:
             self.stop()
         except Exception:
             pass
+
+
+def _preset_position(preset):
+    """Where a preset points, if the camera says (ONVIF lets it include the position with each preset; many cheap
+    cameras leave it out, or give the same placeholder for every preset)."""
+    pos = getattr(preset, "PTZPosition", None)
+    pt = getattr(pos, "PanTilt", None) if pos else None
+    if pt is None or getattr(pt, "x", None) is None:
+        return {}
+    zoom = getattr(getattr(pos, "Zoom", None), "x", None)
+    out = {"pan": round(float(pt.x), 4), "tilt": round(float(pt.y or 0), 4)}
+    if zoom is not None:
+        out["zoom"] = round(float(zoom), 4)
+    return out

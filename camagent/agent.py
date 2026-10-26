@@ -282,6 +282,12 @@ class CameraAgent:
                     self._publish_telemetry()
                 stop.wait(self.POSITION_BUSY_S if busy else self.POSITION_IDLE_S)
                 continue
+            if (self.position_kind == "unknown" and self.ptz and getattr(self.ptz, "reports_position", None) is False):
+                self.position_kind = "fake"           # the camera says so itself: no need to wait for moves
+                self.log.info("this camera says it doesn't report its position: map direction will need preset "
+                              "directions")
+                self._publish_telemetry()
+                continue
             if pos is not None:
                 # Real or placeholder? Some cameras answer the position request with a fixed value.
                 if baseline is None:

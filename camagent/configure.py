@@ -621,6 +621,9 @@ def _apply(main_path):
     if service.is_installed():
         if yes("Restart CamAgent to use the new settings?", default=True):
             service.restart()
+        else:
+            print('CamAgent keeps using the old settings until it restarts (menu: "Restart CamAgent", or restart the')
+            print("computer).")
     elif yes("Start CamAgent now? It keeps sending your camera in the background and starts by itself\n  whenever this computer turns on.", default=True):
         service.install(main_path)
     else:
@@ -728,12 +731,12 @@ def remove(config_path=None, camera_id=None):
         raise SystemExit("Cancelled. Nothing was removed.")
     config.remove_camera(cam, main_path)
     print(f"Removed '{cid}'. It stays on yonderview.net; this computer just stops sending it.")
-    if service.is_installed() and len(cams) > 1:
-        if yes("Restart CamAgent so it stops sending it now?", default=True):
-            service.restart()
-    elif service.is_installed():
-        print("That was the last camera on this computer. CamAgent still runs in the background (with nothing to")
-        print("send). To stop it completely, type this as administrator: camagent uninstall-service")
+    if service.is_installed():                       # the running CamAgent still has it loaded until it restarts
+        print("Restarting CamAgent so it stops sending it now...")
+        service.restart()
+        if len(cams) == 1:
+            print("That was the last camera on this computer. CamAgent still runs in the background (with nothing to")
+            print("send). To stop it completely, type this as administrator: camagent uninstall-service")
 
 
 def list_cameras(config_path=None):
