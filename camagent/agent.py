@@ -183,6 +183,8 @@ class CameraAgent:
             return self.ptz.goto_preset(cmd["id"])
         if op == "presets":
             return self.ptz.presets()
+        if op == "position":
+            return self.position_now()
         if op == "preset_record":
             return {"token": self.ptz.record_preset(cmd.get("name", "Preset"), cmd.get("id") or None)}
         if op == "preset_delete":
@@ -261,9 +263,12 @@ class CameraAgent:
                if self.weather and self.weather_pending and self.weather.uid else {}),
         }
 
+    POSITION_BUSY_S = 2      # how often to ask the camera where it points while it's steered from YonderView
+    POSITION_IDLE_S = 5      # ...and otherwise (it may be moved from its own app or web page, which we don't see)
+
     def track_position(self, stop):
         """Report where the PTZ camera points: every 2 s while it's being moved (and for 20 s after), every
-        60 s when idle. Telemetry goes out only when the position actually changes, so the map cone follows."""
+        5 s otherwise. Telemetry goes out only when the position actually changes, so the map cone follows."""
         baseline, moves_then = None, 0
         while not stop.is_set():
             busy = self.ptz and time.time() - self.ptz.last_activity < 20
@@ -275,7 +280,7 @@ class CameraAgent:
                     self._sent_cmd = commanded
                     self.ptz_position = dict(commanded, commanded=True)
                     self._publish_telemetry()
-                stop.wait(2 if busy else 60)
+                stop.wait(self.POSITION_BUSY_S if busy else self.POSITION_IDLE_S)
                 continue
             if pos is not None:
                 # Real or placeholder? Some cameras answer the position request with a fixed value.
@@ -291,12 +296,30 @@ class CameraAgent:
                         self.log.info("this camera reports a fixed position while moving: map direction will need "
                                       "preset directions")
                         self._publish_telemetry()
-                old = self.ptz_position or {}
-                moved = any(abs((pos.get(k) or 0) - (old.get(k) or 0)) > 0.002 for k in ("pan", "tilt", "zoom"))
-                if moved or not old:
-                    self.ptz_position = dict(pos, t=int(time.time()))
-                    self._publish_telemetry()
-            stop.wait(2 if busy else 60)
+                self._note_position(pos)
+            stop.wait(self.POSITION_BUSY_S if busy else self.POSITION_IDLE_S)
+
+    def _note_position(self, pos):
+        """Keep a fresh reading; send it to the website only if the camera moved."""
+        old = self.ptz_position or {}
+        moved = any(abs((pos.get(k) or 0) - (old.get(k) or 0)) > 0.002 for k in ("pan", "tilt", "zoom"))
+        if moved or not old:
+            self.ptz_position = dict(pos, t=int(time.time()))
+            self._publish_telemetry()
+
+    def position_now(self):
+        """Where the camera points right now, asked of the camera this moment (the website calls this before it
+        saves a map direction, so a reading from before the last move is never used)."""
+        if self.position_kind == "fake":
+            commanded = getattr(self.ptz, "commanded", None)
+            if not isinstance(commanded, dict):
+                raise RuntimeError("this camera doesn't report where it points")
+            return dict(commanded, commanded=True)
+        pos = self.ptz.position()
+        if pos is None:
+            raise RuntimeError("the camera didn't say where it points")
+        self._note_position(pos)
+        return dict(pos, fresh=True)
 
     def _publish_telemetry(self):
         """True if it went out (pending weather readings are then cleared)."""
