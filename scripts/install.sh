@@ -186,7 +186,10 @@ def fetch(folder, tag="", keys=None):
     version = tag[1:]
     assets = {a.get("name"): a.get("browser_download_url", "") for a in info.get("assets") or []}
     wheel, lock = f"camagent-{version}-py3-none-any.whl", f"camagent-{version}-requirements.lock"
-    missing = [n for n in ("SHA256SUMS", "SHA256SUMS.sig", wheel, lock) if not assets.get(n)]
+    # releases before 0.17.0 have no lock: their signed package only (its packages come from PyPI, as they always did)
+    locked = tuple(int(n) for n in version.split(".")) >= (0, 17, 0)
+    needed = (wheel, lock) if locked else (wheel,)
+    missing = [n for n in ("SHA256SUMS", "SHA256SUMS.sig") + needed if not assets.get(n)]
     if missing:
         raise Refused(f"CamAgent {tag} isn't a signed release this installer can use (missing {', '.join(missing)})")
     sums, sig = get(assets["SHA256SUMS"]), get(assets["SHA256SUMS.sig"])
@@ -194,7 +197,7 @@ def fetch(folder, tag="", keys=None):
         raise Refused(f"CamAgent {tag}: the signature doesn't match YonderView's release key")
     listed = parse_sums(sums)
     files = {"SHA256SUMS": sums, "SHA256SUMS.sig": sig}
-    for n in (wheel, lock):
+    for n in needed:
         if n not in listed:
             raise Refused(f"CamAgent {tag}: the signed checksums don't list {n}")
         data = get(assets[n])
@@ -229,11 +232,17 @@ if __name__ == "__main__":
 CAMAGENT_VERIFY
 ) || exit 1
 
-echo "==> Installing CamAgent $VERSION (with only the exact packages its signed list allows)"
-"$APP/venv/bin/python" -I -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
-  -r "$DL/camagent-$VERSION-requirements.lock"
-"$APP/venv/bin/python" -I -m pip install -q --disable-pip-version-check --force-reinstall --no-deps \
-  "$DL/camagent-$VERSION-py3-none-any.whl"
+if [ -f "$DL/camagent-$VERSION-requirements.lock" ]; then
+  echo "==> Installing CamAgent $VERSION (with only the exact packages its signed list allows)"
+  "$APP/venv/bin/python" -I -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: \
+    -r "$DL/camagent-$VERSION-requirements.lock"
+  "$APP/venv/bin/python" -I -m pip install -q --disable-pip-version-check --force-reinstall --no-deps \
+    "$DL/camagent-$VERSION-py3-none-any.whl"
+else    # a release from before 0.17.0: its signed package, the packages it needs from PyPI
+  echo "==> Installing CamAgent $VERSION"
+  "$APP/venv/bin/python" -I -m pip install -q --disable-pip-version-check --force-reinstall \
+    "$DL/camagent-$VERSION-py3-none-any.whl"
+fi
 # keep the checked files, like `camagent update` does (for rolling back)
 mkdir -p "$APP/releases"
 rm -rf "$APP/releases/$VERSION"

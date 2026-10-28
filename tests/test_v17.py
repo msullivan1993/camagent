@@ -145,6 +145,21 @@ for bad in ({**rel, release.wheel_name("0.17.0"): wheel + b"x"},                
             raise AssertionError("verifier accepted a bad release")
         except VR.Refused:
             assert not os.listdir(d)                                                     # nothing written
+# a release from before 0.17.0 (no lock): its signed package alone is enough, and still must match
+old_wheel = b"old wheel"
+old_sums = f"{hashlib.sha256(old_wheel).hexdigest()}  {release.wheel_name('0.16.5')}\n".encode()
+old = {"SHA256SUMS": old_sums, "SHA256SUMS.sig": base64.b64encode(key.sign(old_sums)),
+       release.wheel_name("0.16.5"): old_wheel}
+with tempfile.TemporaryDirectory() as d, mock.patch.object(VR, "get", side_effect=gh(old, "v0.16.5")):
+    assert VR.fetch(d, "", keys=[pub]) == "0.16.5"
+    assert sorted(os.listdir(d)) == sorted(old)
+with tempfile.TemporaryDirectory() as d, \
+        mock.patch.object(VR, "get", side_effect=gh({**old, release.wheel_name("0.16.5"): b"evil"}, "v0.16.5")):
+    try:
+        VR.fetch(d, "", keys=[pub])
+        raise AssertionError("verifier accepted a changed old package")
+    except VR.Refused:
+        assert not os.listdir(d)
 for tag in ("main", "v1.0;rm -rf /", "../v1.0.0"):
     try:
         VR.fetch(tempfile.gettempdir(), tag, keys=[pub])

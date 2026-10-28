@@ -5,6 +5,10 @@ signed with this key, so someone who took over the GitHub account still couldn't
   .venv/bin/python scripts/sign_release.py key-new          once: make the key (asks for a passphrase)
   .venv/bin/python scripts/sign_release.py pubkey           show the public key (goes in camagent/release.py)
   .venv/bin/python scripts/sign_release.py sign v0.16.0     after pushing the tag and the Release workflow passing
+  .venv/bin/python scripts/sign_release.py sign v0.17.0 --test
+                            the same, published as a pre-release: installers and `camagent update --ref v0.17.0`
+                            can install it by name, but agents' nightly check (the latest release) skips it
+  .venv/bin/python scripts/sign_release.py promote v0.17.0  tested: make it the latest release (agents take it nightly)
 
 `sign` builds the wheel from the tag itself (a clean copy of exactly what the tag holds), takes the tag's
 requirements.lock (the exact dependencies, with their checksums; scripts/lock_requirements.py) as
@@ -76,7 +80,7 @@ def key_new():
     print(f"Public key (for camagent/release.py PUBLIC_KEYS):\n  {_public_b64(key)}")
 
 
-def sign(tag):
+def sign(tag, test=False):
     if not tag.startswith("v"):
         sys.exit("Give the tag, e.g. v0.16.0")
     version = tag[1:]
@@ -129,22 +133,39 @@ def sign(tag):
         subprocess.run(["gh", "release", "upload", tag, str(wheel), str(lock), str(Path(d) / "SHA256SUMS"),
                         str(Path(d) / "SHA256SUMS.sig"), "--clobber"], cwd=REPO, check=True)
         # the Release workflow leaves it a draft (invisible to agents) until it's signed: publish it now
+        if test:
+            subprocess.run(["gh", "release", "edit", tag, "--draft=false", "--prerelease", "--latest=false"],
+                           cwd=REPO, check=True, capture_output=True)
+            print(f"Signed and published {tag} as a pre-release (for testing). Agents won't take it nightly. Install it "
+                  f"by name (CAMAGENT_REF={tag}, or camagent update --ref {tag}); when it's good: "
+                  f"sign_release.py promote {tag}")
+            return
         subprocess.run(["gh", "release", "edit", tag, "--draft=false", "--latest"], cwd=REPO, check=True,
                        capture_output=True)
     print(f"Signed, uploaded and published {tag}. Agents will install it on their next nightly check.")
 
 
+def promote(tag):
+    """A tested pre-release becomes the latest release (already signed: nothing is rebuilt)."""
+    subprocess.run(["gh", "release", "edit", tag, "--prerelease=false", "--latest"], cwd=REPO, check=True)
+    print(f"{tag} is now the latest release. Agents will install it on their next nightly check.")
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in ("key-new", "pubkey", "sign"):
+    if len(sys.argv) < 2 or sys.argv[1] not in ("key-new", "pubkey", "sign", "promote"):
         sys.exit(__doc__)
     if sys.argv[1] == "key-new":
         key_new()
     elif sys.argv[1] == "pubkey":
         print(_public_b64(_load()))
-    else:
+    elif sys.argv[1] == "promote":
         if len(sys.argv) != 3:
-            sys.exit("Usage: sign_release.py sign v0.16.0")
-        sign(sys.argv[2])
+            sys.exit("Usage: sign_release.py promote v0.17.0")
+        promote(sys.argv[2])
+    else:
+        if len(sys.argv) not in (3, 4) or (len(sys.argv) == 4 and sys.argv[3] != "--test"):
+            sys.exit("Usage: sign_release.py sign v0.16.0 [--test]")
+        sign(sys.argv[2], test=len(sys.argv) == 4)
 
 
 if __name__ == "__main__":

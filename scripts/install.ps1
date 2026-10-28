@@ -254,7 +254,10 @@ def fetch(folder, tag="", keys=None):
     version = tag[1:]
     assets = {a.get("name"): a.get("browser_download_url", "") for a in info.get("assets") or []}
     wheel, lock = f"camagent-{version}-py3-none-any.whl", f"camagent-{version}-requirements.lock"
-    missing = [n for n in ("SHA256SUMS", "SHA256SUMS.sig", wheel, lock) if not assets.get(n)]
+    # releases before 0.17.0 have no lock: their signed package only (its packages come from PyPI, as they always did)
+    locked = tuple(int(n) for n in version.split(".")) >= (0, 17, 0)
+    needed = (wheel, lock) if locked else (wheel,)
+    missing = [n for n in ("SHA256SUMS", "SHA256SUMS.sig") + needed if not assets.get(n)]
     if missing:
         raise Refused(f"CamAgent {tag} isn't a signed release this installer can use (missing {', '.join(missing)})")
     sums, sig = get(assets["SHA256SUMS"]), get(assets["SHA256SUMS.sig"])
@@ -262,7 +265,7 @@ def fetch(folder, tag="", keys=None):
         raise Refused(f"CamAgent {tag}: the signature doesn't match YonderView's release key")
     listed = parse_sums(sums)
     files = {"SHA256SUMS": sums, "SHA256SUMS.sig": sig}
-    for n in (wheel, lock):
+    for n in needed:
         if n not in listed:
             raise Refused(f"CamAgent {tag}: the signed checksums don't list {n}")
         data = get(assets[n])
@@ -302,10 +305,17 @@ try {
     $Version = "$Version".Trim()
     if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "CamAgent wasn't installed: the release check gave an unexpected answer ($Version)." }
 
-    Write-Host "==> Installing CamAgent $Version (with only the exact packages its signed list allows)"
-    & $venvPy -I -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: -r (Join-Path $dl "camagent-$Version-requirements.lock")
-    if ($LASTEXITCODE -ne 0) { throw "Installing the packages CamAgent needs failed (pip returned $LASTEXITCODE). Check this computer's internet connection and run the install line again." }
-    & $venvPy -I -m pip install -q --disable-pip-version-check --force-reinstall --no-deps (Join-Path $dl "camagent-$Version-py3-none-any.whl")
+    $lockFile = Join-Path $dl "camagent-$Version-requirements.lock"
+    $wheelFile = Join-Path $dl "camagent-$Version-py3-none-any.whl"
+    if (Test-Path $lockFile) {
+        Write-Host "==> Installing CamAgent $Version (with only the exact packages its signed list allows)"
+        & $venvPy -I -m pip install -q --disable-pip-version-check --require-hashes --only-binary :all: -r $lockFile
+        if ($LASTEXITCODE -ne 0) { throw "Installing the packages CamAgent needs failed (pip returned $LASTEXITCODE). Check this computer's internet connection and run the install line again." }
+        & $venvPy -I -m pip install -q --disable-pip-version-check --force-reinstall --no-deps $wheelFile
+    } else {    # a release from before 0.17.0: its signed package, the packages it needs from PyPI
+        Write-Host "==> Installing CamAgent $Version"
+        & $venvPy -I -m pip install -q --disable-pip-version-check --force-reinstall $wheelFile
+    }
     if ($LASTEXITCODE -ne 0) { throw "Installing CamAgent failed (pip returned $LASTEXITCODE). Run the install line again." }
     # keep the checked files, like `camagent update` does (for rolling back)
     $releases = Join-Path $Base "releases"
