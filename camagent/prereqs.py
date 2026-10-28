@@ -38,6 +38,12 @@ def admin_only_location(path) -> bool:
 
 
 _warned_unsafe = set()
+_refused = {}                       # the ffmpeg last refused, and why (for the status, telemetry and doctor)
+
+
+def unsafe_ffmpeg() -> str:
+    """Why no ffmpeg is used although one was found (only one a normal user could change), or ""."""
+    return _refused.get("reason", "")
 
 
 def _windows_ffmpeg_candidates():
@@ -54,8 +60,9 @@ def _windows_ffmpeg_candidates():
 
 
 def find_ffmpeg(configured=""):
-    """The ffmpeg to run. On Windows, one in an administrators-only folder is preferred over the configured or
-    PATH one when those sit where a normal user could replace them."""
+    """The ffmpeg to run. On Windows only one in an administrators-only folder: the configured or PATH one is
+    skipped when it sits where a normal user could replace it, and "" is returned if there's no other (the reason:
+    unsafe_ffmpeg())."""
     picks = []
     if configured and Path(configured).exists():
         picks.append(configured)
@@ -66,15 +73,19 @@ def find_ffmpeg(configured=""):
         picks += list(_windows_ffmpeg_candidates())
     for p in picks:
         if admin_only_location(p):
+            _refused.clear()
             return p
-    if picks:                                   # only unsafe ones: keep the camera working, but say so
+    if picks:
+        # Only ones a normal user could replace (0.17: refused, before it ran anyway with a warning): whatever they
+        # put there would run as the service. No video until ffmpeg is installed for all users.
+        _refused["reason"] = (f"not using ffmpeg at {picks[0]}: it's in a folder any user of this computer can "
+                              "change, so it isn't safe to run. Install ffmpeg for all users: in an administrator "
+                              "window type winget install -e --id Gyan.FFmpeg --scope machine, then restart CamAgent")
         if picks[0] not in _warned_unsafe:
             _warned_unsafe.add(picks[0])
-            print(f"WARNING: ffmpeg at {picks[0]} is in a folder any user of this computer can change, and CamAgent "
-                  f"runs it with full system rights (a security risk). To fix it, install ffmpeg for all users: in an "
-                  f"administrator window type winget install -e --id Gyan.FFmpeg --scope machine, then change the "
-                  f"camera's settings in CamAgent again.", flush=True)
-        return picks[0]
+            print("WARNING: " + _refused["reason"] + ".", flush=True)
+        return ""
+    _refused.clear()
     return ""
 
 
@@ -143,7 +154,8 @@ def check_and_fix(yes, configured_ffmpeg=""):
     from . import camera                     # (through camera, so tests and callers can substitute it)
     ffmpeg = camera.find_ffmpeg(configured_ffmpeg)
     if not ffmpeg:
-        print("  ffmpeg: not found. CamAgent needs this free video tool to send video.")
+        print(f"  ffmpeg: {unsafe_ffmpeg()}." if unsafe_ffmpeg() else
+              "  ffmpeg: not found. CamAgent needs this free video tool to send video.")
         if yes("Install ffmpeg now?", default=True) and install_ffmpeg():
             ffmpeg = camera.find_ffmpeg()
         if not ffmpeg:

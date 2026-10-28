@@ -6,9 +6,11 @@ signed with this key, so someone who took over the GitHub account still couldn't
   .venv/bin/python scripts/sign_release.py pubkey           show the public key (goes in camagent/release.py)
   .venv/bin/python scripts/sign_release.py sign v0.16.0     after pushing the tag and the Release workflow passing
 
-`sign` builds the wheel from the tag itself (a clean copy of exactly what the tag holds), writes SHA256SUMS,
-signs it, uploads all three to the tag's draft release (gh CLI) and publishes it. The passphrase is asked each
-time. Needs `pip install build cryptography` in the venv.
+`sign` builds the wheel from the tag itself (a clean copy of exactly what the tag holds), takes the tag's
+requirements.lock (the exact dependencies, with their checksums; scripts/lock_requirements.py) as
+camagent-<version>-requirements.lock, writes SHA256SUMS for both, signs it, uploads all four to the tag's draft
+release (gh CLI) and publishes it. Agents and the installers install the dependencies only from that signed lock
+(0.17). The passphrase is asked each time. Needs `pip install build cryptography` in the venv.
 
 The key lives in ~/.config/camagent-release/release-key.pem (encrypted with the passphrase). Keep a backup of that
 file and the passphrase somewhere safe (a password manager): without it, no new update can reach hosts.
@@ -104,15 +106,27 @@ def sign(tag):
         wheel = Path(d) / "dist" / f"camagent-{version}-py3-none-any.whl"
         if not wheel.exists():
             sys.exit(f"The build didn't make {wheel.name}.")
-        sums = f"{hashlib.sha256(wheel.read_bytes()).hexdigest()}  {wheel.name}\n".encode()
+        # the dependencies: the tag's lock, checked against the tag's pyproject.toml
+        if not (src / "requirements.lock").exists():
+            sys.exit(f"{tag} has no requirements.lock. Make it: .venv/bin/python scripts/lock_requirements.py")
+        sys.path.insert(0, str(src / "scripts"))
+        import lock_requirements                          # the tag's own copy
+        problems = lock_requirements.check((src / "requirements.lock").read_text(encoding="utf-8"),
+                                           lock_requirements.project_requirements(src / "pyproject.toml"))
+        if problems:
+            sys.exit(f"{tag}'s requirements.lock isn't right (run scripts/lock_requirements.py, commit, tag again):\n  "
+                     + "\n  ".join(problems))
+        lock = Path(d) / "dist" / f"camagent-{version}-requirements.lock"
+        lock.write_bytes((src / "requirements.lock").read_bytes())
+        sums = "".join(f"{hashlib.sha256(f.read_bytes()).hexdigest()}  {f.name}\n" for f in (wheel, lock)).encode()
         sig = base64.b64encode(key.sign(sums)) + b"\n"
         sys.path.insert(0, str(src))
         from camagent import release                      # the tag's own checker must accept it
-        release._check(version, sums, sig, wheel.read_bytes())
+        release._check(version, sums, sig, wheel.read_bytes(), lock_bytes=lock.read_bytes())
         (Path(d) / "SHA256SUMS").write_bytes(sums)
         (Path(d) / "SHA256SUMS.sig").write_bytes(sig)
         subprocess.run(["gh", "release", "view", tag], cwd=REPO, check=True, capture_output=True)
-        subprocess.run(["gh", "release", "upload", tag, str(wheel), str(Path(d) / "SHA256SUMS"),
+        subprocess.run(["gh", "release", "upload", tag, str(wheel), str(lock), str(Path(d) / "SHA256SUMS"),
                         str(Path(d) / "SHA256SUMS.sig"), "--clobber"], cwd=REPO, check=True)
         # the Release workflow leaves it a draft (invisible to agents) until it's signed: publish it now
         subprocess.run(["gh", "release", "edit", tag, "--draft=false", "--latest"], cwd=REPO, check=True,

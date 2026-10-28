@@ -23,6 +23,7 @@ REQUIRED = [
 ]
 REQUIRED_STREAM = [
     ("camera", "rtsp_url"), ("platform", "ingest_host"), ("platform", "srt_password"),
+    ("platform", "srt_passphrase"),     # 0.17: never sent unencrypted (YonderView always gives one)
 ]
 
 
@@ -36,6 +37,10 @@ def missing_settings(cfg):
 
 
 MAX_COMMAND_BYTES = 64 * 1024        # the website's commands are a few hundred bytes
+MAX_CONFIG_BYTES = 16 * 1024         # ...and its camera settings message less still
+FUTURE_COMMAND_S = 60                # a command dated further ahead than this is refused (0.17)
+SEEN_REQ_S = 300                     # a command id seen in the last 5 minutes isn't run again (a replay)
+SEEN_REQ_MAX = 500
 CONTROL_OPS = {"focus", "autofocus", "daynight", "aux", "home", "reboot", "sync_clock", "point", "probe"}
 
 
@@ -96,6 +101,8 @@ class CameraAgent:
         self.mq.on_connect = self._on_connect
         self.mq.on_disconnect = self._on_disconnect
         self.mq.on_message = self._on_message
+        self.mq.suppress_exceptions = True    # a callback failing must never stop the MQTT connection (0.17)
+        self._seen_req = collections.OrderedDict()      # command id -> when (replays are ignored)
 
     # ---------- MQTT ----------
     def _on_connect(self, c, userdata, flags, reason_code, properties=None):
@@ -114,9 +121,31 @@ class CameraAgent:
             self.log.warning("MQTT disconnected: %s", reason_code)
 
     def _on_message(self, c, userdata, msg):
-        if msg.topic == self.topics["config"]:
-            self._apply_config(msg.payload)
-            return
+        try:
+            if msg.topic == self.topics["config"]:
+                self._apply_config(msg.payload)
+            else:
+                self._on_command(c, msg)
+        except Exception as e:  # noqa: BLE001 - one bad message must never stop the others (or the connection)
+            self.log.warning("ignored a message that couldn't be handled: %s", scrub(str(e))[:200])
+
+    def _replayed(self, req):
+        """True if this command id was already run in the last few minutes (remembered: a bounded list)."""
+        if req is None:
+            return False
+        seen = self.__dict__.setdefault("_seen_req", collections.OrderedDict())
+        now, key = time.monotonic(), str(req)[:100]
+        while seen:
+            _, at = next(iter(seen.items()))
+            if now - at < SEEN_REQ_S and len(seen) < SEEN_REQ_MAX:
+                break
+            seen.popitem(last=False)
+        if key in seen:
+            return True
+        seen[key] = now
+        return False
+
+    def _on_command(self, c, msg):
         req = None
         try:
             if len(msg.payload) > MAX_COMMAND_BYTES:
@@ -125,12 +154,22 @@ class CameraAgent:
             if not isinstance(cmd, dict):
                 raise RuntimeError("not a command; ignored")
             req = cmd.get("req")
+            if req is not None and not isinstance(req, (str, int)):
+                req = None
+                raise RuntimeError("bad command id; ignored")
             ts = cmd.get("ts")
-            if not isinstance(ts, (int, float)):
+            if not isinstance(ts, (int, float)) or isinstance(ts, bool):
                 raise RuntimeError("command without a time; ignored")      # the website always sends one
-            # (a command "from the future" is accepted, as before: this PC's clock may simply be behind)
-            if time.time() - float(ts) > float(self.cfg["agent"].get("stale_command_s", 5)):
+            age = time.time() - float(ts)
+            if age > float(self.cfg["agent"].get("stale_command_s", 5)):
                 raise RuntimeError("command too old; ignored")
+            # a little "from the future" is fine (this PC's clock may be behind); a lot isn't (0.17: a command
+            # saved and replayed later would otherwise pass the age check)
+            if age < -FUTURE_COMMAND_S:
+                raise RuntimeError("command dated in the future (check this computer's clock); ignored")
+            if self._replayed(req):
+                self.log.info("command %s already done; ignored a repeat", str(req)[:40])
+                return
             result = self._handle(cmd)
             if cmd.get("op") != "move":
                 self.log.info("command: %s", cmd.get("op"))
@@ -141,14 +180,26 @@ class CameraAgent:
 
     def _apply_config(self, payload):
         try:
+            if len(payload or b"") > MAX_CONFIG_BYTES:
+                raise ValueError("too big")
             new = json.loads(payload or b"{}")
-        except ValueError:
-            self.log.warning("ignored bad config message")
+            if not isinstance(new, dict):
+                raise ValueError("not a settings message")
+        except ValueError as e:
+            self.log.warning("ignored bad config message (%s)", e)
             return
+        try:
+            self._use_config(new)
+        except Exception as e:  # noqa: BLE001
+            self.log.warning("ignored bad config message: %s", scrub(str(e))[:200])
+
+    def _use_config(self, new):
         if self.ptz:
             self.ptz.settings.update({k: bool(new.get(k, False)) for k in ("invert_pan", "invert_tilt")})
             self.log.info("camera settings: %s", self.ptz.settings)
-        self.server = {"max_height": new.get("max_height"), "declined": new.get("declined") or ""}
+        max_height = new.get("max_height")
+        self.server = {"max_height": max_height if isinstance(max_height, int) and not isinstance(max_height, bool)
+                       else None, "declined": str(new.get("declined") or "")[:500]}
         try:
             latency = int(new.get("latency_ms") or 0)
         except (TypeError, ValueError):
@@ -452,13 +503,20 @@ class Supervisor:
         path = config.status_path()
         data = {"pid": os.getpid(), "version": __version__, "updated": time.time(),
                 "started": self.started, "cameras": {a.cam_id: a.status() for a in self.agents}}
+        text = json.dumps(data)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data), encoding="utf-8")
+            tmp.write_text(text, encoding="utf-8")
             os.replace(tmp, path)
-        except OSError as e:
-            log.debug("couldn't write %s: %s", path, e)
+        except OSError:
+            try:
+                # Windows (0.17): the service's own account may change status.json but not make files beside it
+                with open(path, "r+", encoding="utf-8") as f:
+                    f.write(text)
+                    f.truncate()
+            except OSError as e:
+                log.debug("couldn't write %s: %s", path, e)
 
     def run(self):
         ids = ", ".join(a.cam_id for a in self.agents)

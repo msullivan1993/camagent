@@ -61,6 +61,7 @@ DEFAULTS = {
         "max_move_ms": 2000,
         "telemetry_interval_s": 30,
         "stale_command_s": 5,
+        "windows_account": "virtual",  # Windows: the account the service runs as: virtual, localservice or system
     },
     "account": {
         "site": "https://yonderview.net",   # where camagent signs in (device sign-in)
@@ -109,22 +110,33 @@ def _merge(defaults, loaded):
 
 
 def account_path(main_path=None) -> Path:
-    """Linux: the YonderView sign-in lives in its own file only root can read (0.16). The service never uses it,
-    so even if something broke into the service account, the token (which can list and reconnect every camera on
-    the account) stays out of reach. Windows keeps it in camagent.toml (that folder is Administrators/SYSTEM only)."""
+    """The YonderView sign-in lives in its own file only root (Linux, 0.16) or Administrators and SYSTEM (Windows,
+    0.17) can read. The service never uses it, so even if something broke into the service's account, the token
+    (which can list and reconnect every camera on the account) stays out of reach."""
     return Path(main_path or default_config_path()).parent / "account.toml"
+
+
+WINDOWS_ADMIN_ACL = ["/inheritance:r", "/grant:r", "*S-1-5-32-544:F", "*S-1-5-18:F"]      # Admins, SYSTEM
+
+
+def lock_windows_file(path):
+    """Windows: only Administrators and SYSTEM may read this file (not the service's own account)."""
+    import subprocess
+    try:
+        subprocess.run(["icacls", str(path), *WINDOWS_ADMIN_ACL], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def load(path=None) -> dict:
     path = Path(path or default_config_path())
     with path.open("rb") as f:
         cfg = _merge(DEFAULTS, tomllib.load(f))
-    if os.name != "nt":
-        try:
-            with account_path(path).open("rb") as f:
-                cfg["account"] = dict(DEFAULTS["account"], **(tomllib.load(f).get("account") or {}))
-        except (FileNotFoundError, PermissionError):
-            pass                                  # not signed in, or the service (it doesn't need it)
+    try:
+        with account_path(path).open("rb") as f:
+            cfg["account"] = dict(DEFAULTS["account"], **(tomllib.load(f).get("account") or {}))
+    except (FileNotFoundError, PermissionError):
+        pass                                      # not signed in, or the service (it doesn't need it)
     return cfg
 
 
@@ -180,10 +192,12 @@ def _secure_dir(d: Path):
 
 
 def _save_account(account: dict, main_path: Path):
-    """Write the sign-in to account.toml: root only (0600), replaced atomically."""
+    """Write the sign-in to account.toml: root only (0600; Windows: Administrators and SYSTEM), replaced atomically."""
     path = account_path(main_path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".account.")
     try:
+        if os.name == "nt":
+            lock_windows_file(tmp)                # before the token goes in (new files inherit the service's read)
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(dumps({"account": account}, ["account"], "YonderView sign-in for this computer (root only)"))
         os.chmod(tmp, 0o600)
@@ -197,9 +211,10 @@ def _save_account(account: dict, main_path: Path):
 
 
 def migrate_account(main_path=None):
-    """Move a sign-in still in camagent.toml (before 0.16) to account.toml. Run as root (setup, updates)."""
+    """Move a sign-in still in camagent.toml (Linux before 0.16, Windows before 0.17) to account.toml. Run as root
+    or an administrator (setup, updates)."""
     main_path = Path(main_path or default_config_path())
-    if os.name == "nt" or not main_path.exists():
+    if not main_path.exists():
         return
     try:
         with main_path.open("rb") as f:
@@ -216,7 +231,7 @@ def save(cfg: dict, path=None, sections=None, title="camagent configuration") ->
     path = Path(path or default_config_path())
     _secure_dir(path.parent)
     sections = list(sections or DEFAULTS)
-    if os.name != "nt" and "account" in sections:
+    if "account" in sections:
         sections.remove("account")                 # in its own root-only file (account_path)
         _save_account(cfg.get("account") or {}, path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".camagent.")
@@ -250,8 +265,11 @@ def cameras_dir(main_path=None) -> Path:
     return Path(main_path or default_config_path()).parent / "cameras"
 
 
+CAMERA_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
 def camera_path(camera_id: str, main_path=None) -> Path:
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", camera_id or ""):
+    if not CAMERA_ID.fullmatch(camera_id or ""):
         raise ValueError(f"not a valid camera ID: {camera_id!r}")
     return cameras_dir(main_path) / f"{camera_id}.toml"
 
@@ -279,6 +297,10 @@ def load_all(main_path=None):
             problems.append(f"{f.name}: {e}")
             continue
         cid = cam["platform"].get("camera_id") or f.stem
+        if not CAMERA_ID.fullmatch(str(cid)):
+            problems.append(f"{f.name}: camera ID {str(cid)[:80]!r} isn't valid (only letters, digits, - and _, "
+                            "up to 64); ignored")
+            continue
         cam["platform"]["camera_id"] = cid
         if cid in seen:
             problems.append(f"{f.name}: camera '{cid}' is configured twice; ignored")
@@ -334,6 +356,14 @@ def status_path() -> Path:
     return Path("/var/lib/camagent/status.json")
 
 
+def state_dir() -> Path:
+    """Where the service keeps what it learns (the versions check). Windows: a folder of its own, since its account
+    can't write in CamAgent's main folder (0.17)."""
+    if os.name == "nt":
+        return base_dir() / "state"
+    return Path("/var/lib/camagent")
+
+
 # ---------- URL helpers ----------
 
 def rtsp_with_auth(url: str, user: str, password: str) -> str:
@@ -383,14 +413,22 @@ def srt_url(cfg: dict, path: str = "") -> str:
     """Where the camera's stream goes; path: a version's path instead (cam_720), same login and passphrase."""
     p, s = cfg["platform"], cfg["stream"]
     cid = p["camera_id"]
+    if not p.get("srt_passphrase"):
+        # the video would cross the internet unencrypted: YonderView always gives one (0.17)
+        raise ValueError(NO_PASSPHRASE)
+    q = lambda v: quote(str(v), safe="")             # noqa: E731 - ffmpeg decodes these (a "&" can't split them)
     params = [
-        f"streamid=publish:{path or cid}:{cid}:{p['srt_password']}",
+        "streamid=" + ":".join(q(x) for x in ("publish", path or cid, cid, p["srt_password"])),
         f"latency={int(s['srt_latency_ms']) * 1000}",
         "pkt_size=1316",
+        f"passphrase={q(p['srt_passphrase'])}", "pbkeylen=16",
     ]
-    if p.get("srt_passphrase"):
-        params += [f"passphrase={p['srt_passphrase']}", "pbkeylen=16"]
     return f"srt://{p['ingest_host']}:{int(p['ingest_port'])}?" + "&".join(params)
+
+
+NO_PASSPHRASE = ("These connection settings have no SRT passphrase, so the video would be sent unencrypted. Get fresh "
+                 "settings from yonderview.net (sign in again, or copy the camera's settings block from its "
+                 "Connection page)")
 
 
 def parse_settings_block(text: str) -> dict:
@@ -412,8 +450,9 @@ def parse_settings_block(text: str) -> dict:
         if len(sid) >= 4:
             out["camera_id"] = sid[1]
             out["srt_password"] = ":".join(sid[3:])
-        if q.get("passphrase"):
-            out["srt_passphrase"] = q["passphrase"][0]
+        if not (q.get("passphrase") or [""])[0]:
+            raise ValueError(NO_PASSPHRASE)                  # refused: nothing from it is used
+        out["srt_passphrase"] = q["passphrase"][0]
         if q.get("latency"):
             out["_srt_latency_ms"] = int(int(q["latency"][0]) / 1000)
     if values.get("CAMERA"):

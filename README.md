@@ -27,8 +27,12 @@ line and press Enter (it asks for your password):
 curl -fsSL https://raw.githubusercontent.com/msullivan1993/camagent/main/scripts/install.sh | sudo bash
 ```
 
-The installer sets up everything CamAgent needs (Python, ffmpeg and Git). Running it again upgrades
-CamAgent and never touches your settings.
+The installer sets up everything CamAgent needs (Python and ffmpeg). Running it again upgrades
+CamAgent and never touches your settings. Since 0.17 it installs only an **official, signed release**: it
+downloads the release's package and its list of the exact packages it needs (with their checksums), checks the
+signature against YonderView's release key *before* installing anything, and stops with a plain message if the
+check fails. (Later, these installers will be served from yonderview.net too, so the first download doesn't depend
+on GitHub.)
 
 **2. Open CamAgent.** On Windows, use the **CamAgent** shortcut in the Start menu, or type `camagent` in
 an administrator PowerShell. On Linux, type `sudo camagent`.
@@ -74,7 +78,6 @@ The install scripts set these up automatically. If you install another way, you 
 |---|---|---|
 | Python 3.11 or newer | `sudo apt install python3 python3-venv` | `winget install -e --id Python.Python.3.12` |
 | ffmpeg | `sudo apt install ffmpeg` | `winget install -e --id Gyan.FFmpeg` |
-| Git | `sudo apt install git` | `winget install -e --id Git.Git` |
 
 CamAgent won't stream video without ffmpeg. **Check for problems** (`camagent doctor`) checks for all of it.
 
@@ -156,7 +159,21 @@ around 3 AM camagent installs a newer release if there is one, checks the camera
 to the previous version if they don't. Results are in `logs/update.log` and in `camagent doctor`.
 Since 0.16 it installs only releases **signed with YonderView's release key** (kept offline, not on GitHub): a
 release without a valid signature is refused, so even someone who took over the GitHub account couldn't push code to
-your computer. `camagent update --ref <branch> --unsigned` installs straight from git, for testing only.
+your computer. Since 0.17 the signature covers the dependencies too: each release carries `requirements.lock` (exact
+versions with their SHA-256), installed with `pip --require-hashes --only-binary :all:`, so a package changed on
+PyPI is refused as well. `camagent update --ref <branch> --unsigned` installs straight from git (needs Git), for
+testing only.
+
+**The background service's account.** On Linux it runs as the `camagent` user in a systemd sandbox. On Windows
+(0.17) it runs as its own limited account, `NT SERVICE\camagent`, not SYSTEM: it can read CamAgent's folder and
+write only its logs, `state` and `status.json`; the YonderView sign-in (`account.toml`) stays readable by
+administrators only. The nightly update task still runs as SYSTEM (installing needs it). If the service doesn't
+work on a PC that way, set `windows_account = "localservice"` (or, last resort, `"system"`) under `[agent]` in
+`camagent.toml` and choose Start CamAgent again.
+
+**Shared Linux computers:** other users can see a program's command line, and ffmpeg's holds the camera's login.
+On a computer others log in to, mount `/proc` with `hidepid=2` (`camagent doctor` says if it isn't), and give
+CamAgent a camera login that can only watch where the camera allows it.
 
 **Setup measures the stream** for a few seconds and shows what the camera sends (resolution, frame
 rate, bitrate, keyframe interval). It only raises things that cause problems: a stream over the camera's
@@ -240,7 +257,7 @@ Still stuck? Choose **Show the recent log**, and send it with **Report a problem
 | | Linux | Windows |
 |---|---|---|
 | Shared settings | `/etc/camagent/camagent.toml` | `C:\ProgramData\camagent\camagent.toml` |
-| YonderView sign-in | `/etc/camagent/account.toml` (root only) | in `camagent.toml` |
+| YonderView sign-in | `/etc/camagent/account.toml` (root only) | `C:\ProgramData\camagent\account.toml` (administrators only; 0.17) |
 | Verified releases (for rolling back) | `/opt/camagent/releases` | `C:\ProgramData\camagent\releases` |
 | Cameras | `/etc/camagent/cameras/<camera>.toml` | `C:\ProgramData\camagent\cameras\<camera>.toml` |
 | Live status | `/var/lib/camagent/status.json` | `C:\ProgramData\camagent\status.json` |
@@ -249,7 +266,8 @@ Still stuck? Choose **Show the recent log**, and send it with **Report a problem
 
 The config contains passwords and is readable only by administrators and the service. On Linux the service runs
 as its own `camagent` user in a systemd sandbox (read-only system, no home folders, no extra privileges); it can
-write only `/var/lib/camagent`.
+write only `/var/lib/camagent`. On Windows it runs as `NT SERVICE\camagent` and can write only `logs`, `state` and
+`status.json` in `C:\ProgramData\camagent`.
 On Linux, after upgrading from 0.1.x, run `sudo camagent install-service` once so `camagent list` can show live status.
 
 ## MQTT topics

@@ -33,25 +33,40 @@ def version_tuple(v):
     return tuple(int(n) for n in nums[:3]) if nums else (0,)
 
 
-def _pip_install(spec):
-    # -I everywhere: Python ignores the current folder (and PYTHON* settings), so nothing there can be run as root
-    pip = [sys.executable, "-I", "-m", "pip", "install", "--disable-pip-version-check", "-q"]
-    # first pass picks up any new dependencies; second forces the code itself to refresh
-    subprocess.run(pip + ["--upgrade", spec], check=True)
-    subprocess.run(pip + ["--upgrade", "--force-reinstall", "--no-deps", spec], check=True)
+# -I everywhere: Python ignores the current folder (and PYTHON* settings), so nothing there can be run as root
+PIP = [sys.executable, "-I", "-m", "pip", "install", "--disable-pip-version-check", "-q"]
+
+
+def _installed_version():
     return subprocess.run([sys.executable, "-I", "-m", "camagent", "version"], capture_output=True,
                           text=True).stdout.strip()
+
+
+def _pip_install(wheel, lock=None):
+    """Install a verified release. Its dependencies come only from its signed lock (0.17): exact versions, every
+    file checked against the checksums listed there, wheels only (nothing is built here, so no unchecked build
+    tools run). The package itself was checked against the signed checksums and brings nothing else (--no-deps).
+    A release from before 0.17 has no lock: only its package is installed, the dependencies stay as they are."""
+    if lock:
+        subprocess.run(PIP + ["--require-hashes", "--only-binary", ":all:", "-r", str(lock)], check=True)
+    subprocess.run(PIP + ["--force-reinstall", "--no-deps", str(wheel)], check=True)
+    return _installed_version()
 
 
 def _install(repo, tag):
     """Install a signed release (see release.py). Raises release.NotSigned if it isn't one."""
     from . import release
-    return _pip_install(str(release.fetch(repo, tag)))
+    wheel = release.fetch(repo, tag)
+    return _pip_install(wheel, release.lock_for(wheel))
 
 
 def _install_unsigned(repo, ref):
-    """Straight from git, unchecked: only when asked by hand with --unsigned (testing a branch)."""
-    return _pip_install(f"camagent @ git+{repo}@{ref}")
+    """Straight from git, unchecked (dependencies too): only when asked by hand with --unsigned (testing a branch)."""
+    spec = f"camagent @ git+{repo}@{ref}"
+    # first pass picks up any new dependencies; second forces the code itself to refresh
+    subprocess.run(PIP + ["--upgrade", spec], check=True)
+    subprocess.run(PIP + ["--upgrade", "--force-reinstall", "--no-deps", spec], check=True)
+    return _installed_version()
 
 
 def _status():

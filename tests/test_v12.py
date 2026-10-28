@@ -39,7 +39,7 @@ assert config.DEFAULTS["platform"]["mqtt_tls"] is True and config.DEFAULTS["plat
 def agent(**p):
     c = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
     c["camera"].update(host="h", rtsp_url="rtsp://h/x", ptz=False)
-    c["platform"].update(camera_id="sec_1", ingest_host="ingest.example", srt_password="s", mqtt_password="m", **p)
+    c["platform"].update(camera_id="sec_1", ingest_host="ingest.example", srt_password="s", srt_passphrase="phrase0123", mqtt_password="m", **p)
     return CameraAgent(c)
 assert agent(mqtt_host="mqtt.example", mqtt_tls=False).mqtt_refused
 assert not agent(mqtt_host="mqtt.example", mqtt_tls=True).mqtt_refused

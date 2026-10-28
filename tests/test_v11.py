@@ -11,7 +11,7 @@ from camagent.uplink import Uplink
 def cfg(**stream):
     c = {s: dict(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS + config.MAIN_SECTIONS}
     c["camera"].update(rtsp_url="rtsp://10.0.0.5/main", username="u", password="p")
-    c["platform"].update(camera_id="cv_0001", ingest_host="ingest.example", srt_password="PW")
+    c["platform"].update(camera_id="cv_0001", ingest_host="ingest.example", srt_password="PW", srt_passphrase="phrase0123")
     c["stream"].update(ffmpeg="/usr/bin/ffmpeg", **stream)
     return c
 

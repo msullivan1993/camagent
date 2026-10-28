@@ -276,6 +276,7 @@ PASTE = "Paste the settings block from the camera's Connection page"
 
 
 def _use_block(cfg, block):
+    """Fill in the camera's connection settings from a settings block. ValueError (plain words) if it's refused."""
     p, s = cfg["platform"], cfg["stream"]
     parsed = config.parse_settings_block(block)
     latency = parsed.pop("_srt_latency_ms", None)
@@ -305,14 +306,22 @@ def account_token(main_path=None, sign_in_if_needed=True):
 
 
 def sign_out(main_path=None):
+    """Revoke the sign-in on the website (0.17), then forget it here (also when the website can't be reached)."""
+    from . import link
     main = config.load_or_defaults(main_path)
-    if not main["account"].get("token"):
+    acct = main["account"]
+    if not acct.get("token"):
         print("This computer isn't signed in.")
         return
-    main["account"].update(token="", name="")
+    site = acct.get("site") or link.DEFAULT_SITE
+    revoked = link.sign_out(site, acct["token"])
+    acct.update(token="", name="")
     config.save_main(main, main_path)
-    print("Signed out on this computer. To remove it from your account completely, also unlink it on")
-    print("yonderview.net: your profile > CamAgent computers.")
+    if revoked:
+        print("Signed out. This computer's sign-in no longer works, here or anywhere.")
+    else:
+        print("Signed out on this computer, but YonderView couldn't be reached to cancel the sign-in there.")
+        print(f"To be sure, open {site.rstrip('/')}/link and unlink this computer in the \"Your computers\" list.")
 
 
 def _from_account(cfg, main_path=None):
@@ -326,7 +335,7 @@ def _from_account(cfg, main_path=None):
         try:
             cams = link.cameras(site, token)
         except link.NotSignedIn:
-            print("  This computer's sign-in was unlinked or expired. Signing in again.")
+            print("  This computer was signed out (unlinked on the website, or unused for 90 days). Signing in again.")
             main = config.load_or_defaults(main_path)
             main["account"].update(token="", name="")
             config.save_main(main, main_path)
@@ -342,22 +351,40 @@ def _from_account(cfg, main_path=None):
     print("Which camera is this?")
     pick = choose(cams, lambda c: (f"{c['name']}" + (f" ({c['place']})" if c.get("place") else "")
                                    + (f"  - {c['org']}" if c.get("org") else "")
-                                   + f"  [{c['slug']}]" + ("" if c.get("enabled", True) else "  (disabled)")),
+                                   + f"  [{c['slug']}]" + ("" if c.get("enabled", True) else "  (disabled)")
+                                   + ("" if c.get("allowed", True) else "  (needs your OK on the website first)")),
                   allow_none_text="None of these: paste a settings block instead")
     if not pick:
         return False
     try:
-        state, block, info = link.connect(site, token, pick["slug"])
-        if state == "confirm":
-            print(f"\n  {block}")
-            print("  Only do this if this computer replaces the one sending it now (or that one is gone).")
-            if not yes("Make new connection settings? The computer sending this camera now will stop.", default=False):
-                return False
-            state, block, info = link.connect(site, token, pick["slug"], replace=True)
+        replace = False
+        while True:
+            state, block, info = link.connect(site, token, pick["slug"], replace=replace)
+            if state == "confirm":
+                print(f"\n  {block}")
+                print("  Only do this if this computer replaces the one sending it now (or that one is gone).")
+                if not yes("Make new connection settings? The computer sending this camera now will stop.",
+                           default=False):
+                    return False
+                replace = True
+                continue
+            if state == "approve":
+                print(f"\n  This computer isn't allowed to set up '{pick['name']}' yet.")
+                print("  On your phone or another computer, open this address, sign in, and allow it:")
+                print(f"      {block}")
+                again = input("  Then press Enter here to try again (or type q and press Enter to stop): ")
+                if again.strip().lower() in ("q", "quit", "n", "no"):
+                    return False
+                continue
+            break
     except link.LinkError as e:
         print(f"  {e}")
         return False
-    _use_block(cfg, block)
+    try:
+        _use_block(cfg, block)
+    except ValueError as e:
+        print(f"  {e}")
+        return False
     if info.get("max_height"):
         cfg["_server"] = {**(cfg.get("_server") or {}), "max_height": info["max_height"]}
     print(f"  Got the connection settings for '{pick['name']}' ({pick['slug']}).")
@@ -450,7 +477,11 @@ def step_platform(cfg, main_path=None):
                 break
             lines.append(line)
     if lines:
-        _use_block(cfg, "\n".join(lines))
+        try:
+            _use_block(cfg, "\n".join(lines))
+        except ValueError as e:
+            print(f"  {e}")
+            return step_platform(cfg, main_path)
         print(f"  Got the settings for camera '{p['camera_id']}'.")
     else:
         print("Copy each value from the settings block on your camera's page on yonderview.net.")

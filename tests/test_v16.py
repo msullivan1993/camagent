@@ -183,7 +183,7 @@ for line in ("NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=yes", "
              "TimeoutStopSec=15"):
     assert line in unit, line
 
-# 9. Commands need the website's time stamp, aren't from the future, and aren't huge
+# 9. Commands need the website's time stamp, aren't old, and aren't huge (0.17: or far in the future: test_v17)
 from camagent import agent as A
 a = A.CameraAgent.__new__(A.CameraAgent)
 a.cfg = {"agent": {"stale_command_s": 5}}
@@ -194,7 +194,7 @@ sent = []
 client = mock.Mock(publish=lambda t, p, qos=0: sent.append(json.loads(p)))
 msg = lambda body: mock.Mock(topic="cam/x/cmd", payload=body if isinstance(body, bytes) else json.dumps(body).encode())
 a._on_message(client, None, msg({"op": "home", "req": "1"}))
-a._on_message(client, None, msg({"op": "home", "req": "2", "ts": time.time() + 3600}))   # this PC's clock is behind
+a._on_message(client, None, msg({"op": "home", "req": "2", "ts": time.time() + 30}))     # this PC's clock is behind
 a._on_message(client, None, msg(b"x" * (A.MAX_COMMAND_BYTES + 1)))
 a._on_message(client, None, msg({"op": "home", "req": "3", "ts": time.time() - 60}))      # stale
 a._on_message(client, None, msg({"op": "home", "req": "4", "ts": time.time()}))

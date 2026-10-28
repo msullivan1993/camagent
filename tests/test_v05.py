@@ -13,7 +13,7 @@ from camagent.uplink import Uplink  # noqa: E402
 
 cfg = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 cfg["camera"].update(host="h", rtsp_url="rtsp://h/x", ptz=False)
-cfg["platform"].update(camera_id="lat_1", ingest_host="ingest.example", srt_password="s", mqtt_host="m",
+cfg["platform"].update(camera_id="lat_1", ingest_host="ingest.example", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m",
                        mqtt_password="p")
 a = CameraAgent(cfg)
 

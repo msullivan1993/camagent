@@ -22,7 +22,7 @@ import time
 
 from . import convert
 from .camera import find_ffmpeg
-from .config import redact, rtsp_with_auth, scrub, srt_url, status_path
+from .config import redact, rtsp_with_auth, scrub, srt_url, state_dir
 
 # ffmpeg lines that aren't problems (it corrects the timestamps itself); kept out of the error shown on the website
 FAILED_CHECK_S = 6 * 3600     # how long a failed versions check is believed
@@ -157,6 +157,18 @@ def args(ffmpeg, method, src, outputs, mark_files=None, mark=None, audio=False, 
     return cmd
 
 
+MAX_KEEP_S = 600
+
+
+def keep_seconds(keep_s):
+    """How long to keep making the versions without the website saying "still wanted": 30 s to 10 minutes (0.17;
+    a bad or huge value can't keep the extra upload going for hours)."""
+    try:
+        return max(30, min(MAX_KEEP_S, int(keep_s or 180)))
+    except (TypeError, ValueError, OverflowError):
+        return 180
+
+
 class Versions:
     """Makes the versions the website asks for, while it keeps asking."""
 
@@ -209,7 +221,7 @@ class Versions:
         return not (method or "").startswith("v4l2m2m") or bool(self.cfg["stream"].get("pi_engine_versions", False))
 
     def _check_file(self):
-        return status_path().with_name(f"versions-check-{self._cid}.json")
+        return state_dir() / f"versions-check-{self._cid}.json"
 
     def _ffmpeg_id(self):
         ffmpeg = find_ffmpeg(self.cfg["stream"].get("ffmpeg", ""))
@@ -299,7 +311,7 @@ class Versions:
         if not self.method or self.gave_up:
             return {"ok": False, "error": self.error or "this PC can't make versions"}
         with self._lock:
-            self.keep_until = time.monotonic() + max(30, int(keep_s or 180))
+            self.keep_until = time.monotonic() + keep_seconds(keep_s)
             spec = json.dumps([versions, mark], sort_keys=True)
             if self.wanted != spec or not self.running():
                 self.wanted = spec

@@ -36,7 +36,7 @@ print("prereqs OK")
 
 # ONVIF must not try to write a cache into a home folder (the Linux service account has none)
 from camagent import camera, service  # noqa: E402
-with mock.patch("onvif.ONVIFCamera") as cam:
+with mock.patch("camagent._onvif.ONVIFCamera") as cam:
     camera.onvif_connect("10.0.0.5", 80, "u", "p")
 assert cam.call_args.kwargs.get("no_cache") is True
 unit = service._linux_unit("/etc/camagent/camagent.toml")

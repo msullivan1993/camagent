@@ -58,7 +58,7 @@ assert r["temp_c"] == 22.4 and near(r["wind_ms"], 4.47, 0.02) and r["pressure_hp
 # --- agent: readings queue up and are cleared only once delivered ---
 cfg = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 cfg["camera"].update(host="h", rtsp_url="rtsp://h/x", ptz=False)
-cfg["platform"].update(camera_id="wx_1", ingest_host="i", srt_password="s", mqtt_host="m", mqtt_password="p")
+cfg["platform"].update(camera_id="wx_1", ingest_host="i", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m", mqtt_password="p")
 cfg["weather"].update(kind="ecowitt", host="192.0.2.10", name="Yard")
 a = CameraAgent(cfg)
 a.weather.uid = "AABBCCDDEEFF"

@@ -14,7 +14,7 @@ from camagent.ptz import PTZ  # noqa: E402
 
 cfg = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 cfg["camera"].update(host="h", rtsp_url="rtsp://h/x", ptz=True)
-cfg["platform"].update(camera_id="pos_1", ingest_host="i", srt_password="s", mqtt_host="m", mqtt_password="p")
+cfg["platform"].update(camera_id="pos_1", ingest_host="i", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m", mqtt_password="p")
 
 # 1. removing the last camera restarts the service (it kept streaming before), without asking
 for n in (1, 2):

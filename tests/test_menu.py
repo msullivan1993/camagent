@@ -8,7 +8,7 @@ from camagent import config, menu, __main__ as cli
 d = Path(tempfile.mkdtemp()); main = d / "camagent.toml"
 cam = {s: dict(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS}
 cam["camera"].update(host="10.0.0.5", rtsp_url="rtsp://10.0.0.5/live", ptz=False)
-cam["platform"].update(camera_id="menu_0001", ingest_host="i", srt_password="s", mqtt_host="m", mqtt_password="p")
+cam["platform"].update(camera_id="menu_0001", ingest_host="i", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m", mqtt_password="p")
 config.save_camera(cam, main)
 m = config.load_or_defaults(main); m["account"].update(token="yva_x", name="Mike"); config.save_main(m, main)
 

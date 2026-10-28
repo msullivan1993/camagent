@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -10,7 +11,16 @@ from .config import base_dir, default_config_path
 SERVICE = "camagent"
 UNIT_PATH = Path("/etc/systemd/system/camagent.service")
 WINSW_URL = "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe"
-WINSW_SHA256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"   # it runs as SYSTEM: check it
+WINSW_SHA256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da"   # it runs the service: check it
+
+# Windows (0.17): the service runs as its own limited account, not SYSTEM, so if a bad camera stream ever broke
+# ffmpeg it couldn't take over the computer. [agent] windows_account in camagent.toml picks it:
+WINDOWS_ACCOUNTS = {
+    "virtual": "NT SERVICE\\camagent",          # a "virtual account" just for this service (default)
+    "localservice": "NT AUTHORITY\\LocalService",   # if that doesn't work on this PC (shared with other services)
+    "system": "LocalSystem",                      # as before 0.17: only if neither works (full system rights)
+}
+LOCAL_SERVICE_SID = "S-1-5-19"
 
 
 def is_admin() -> bool:
@@ -114,7 +124,7 @@ def _win_xml(config_path) -> str:
   <name>camagent</name>
   <description>camagent (camera uplink and PTZ agent)</description>
   <executable>{sys.executable}</executable>
-  <arguments>-u -m camagent run --config "{config_path}"</arguments>
+  <arguments>-I -u -m camagent run --config "{config_path}"</arguments>
   <workingdirectory>{base_dir()}</workingdirectory>
   <logpath>{log_dir}</logpath>
   <log mode="roll-by-size">
@@ -125,6 +135,78 @@ def _win_xml(config_path) -> str:
   <stoptimeout>15 sec</stoptimeout>
 </service>
 """
+
+
+def service_sid(name=SERVICE) -> str:
+    """The SID Windows gives a service's own account (NT SERVICE\\<name>): S-1-5-80- and the SHA-1 of the upper-case
+    name in UTF-16LE, as five numbers. Known without asking Windows (folder permissions are set by SID: account
+    names differ by language)."""
+    import hashlib
+    import struct
+    digest = hashlib.sha1(name.upper().encode("utf-16-le")).digest()
+    return "S-1-5-80-" + "-".join(str(n) for n in struct.unpack("<5I", digest))
+
+
+def windows_account(config_path=None):
+    """(account name for sc.exe, its SID or None for SYSTEM, the setting's name)."""
+    from .config import load_or_defaults
+    try:
+        mode = str(load_or_defaults(config_path)["agent"].get("windows_account") or "virtual").strip().lower()
+    except Exception:  # noqa: BLE001 - a broken settings file: keep the safe default
+        mode = "virtual"
+    if mode not in WINDOWS_ACCOUNTS:
+        mode = "virtual"
+    sid = {"virtual": service_sid(), "localservice": LOCAL_SERVICE_SID}.get(mode)
+    return WINDOWS_ACCOUNTS[mode], sid, mode
+
+
+def _icacls(*args):
+    r = subprocess.run(["icacls", *[str(a) for a in args]], capture_output=True, text=True)
+    if r.returncode:
+        print(f"  (couldn't change the permissions of {args[0]}: {(r.stdout + r.stderr).strip()[-200:]})")
+    return r.returncode == 0
+
+
+def _win_grant_access(sid):
+    """What the service's account may do in CamAgent's folder (Administrators and SYSTEM only otherwise): read
+    and run everything (settings, the program), write only its logs, its state and status.json. Never the
+    YonderView sign-in (account.toml, kept to Administrators and SYSTEM)."""
+    from .config import account_path, lock_windows_file, state_dir, status_path
+    base = base_dir()
+    _icacls(base, "/grant", f"*{sid}:(OI)(CI)(RX)")
+    for d in (base / "logs", state_dir()):
+        d.mkdir(parents=True, exist_ok=True)
+        _icacls(d, "/grant", f"*{sid}:(OI)(CI)(M)")
+    status = status_path()
+    if not status.exists():
+        status.write_text("{}", encoding="utf-8")
+    _icacls(status, "/grant", f"*{sid}:(M)")             # rewritten in place (it can't make files next to it)
+    acct = account_path()
+    if acct.exists():
+        lock_windows_file(acct)
+
+
+def _win_apply_account(config_path=None):
+    """Run the service as its own account (see WINDOWS_ACCOUNTS). Takes effect at its next start."""
+    name, sid, mode = windows_account(config_path)
+    if sid:
+        _win_grant_access(sid)
+    cmd = ["sc", "config", SERVICE, "obj=", name] + (["password=", ""] if sid else [])
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode:
+        print(f"  (couldn't set the account CamAgent runs as to {name}: {(r.stdout + r.stderr).strip()[-200:]})")
+        return False
+    if mode != "virtual":
+        print(f"  CamAgent runs as {name} ([agent] windows_account = \"{mode}\" in camagent.toml).")
+    return True
+
+
+def _winsw_ok(exe) -> bool:
+    import hashlib
+    try:
+        return hashlib.sha256(Path(exe).read_bytes()).hexdigest() == WINSW_SHA256
+    except OSError:
+        return False
 
 
 def _download_checked(url, sha256, dest):
@@ -150,14 +232,21 @@ def install(config_path=None):
     if os.name == "nt":
         exe, xml = _win_paths()
         exe.parent.mkdir(parents=True, exist_ok=True)
-        if not exe.exists():
+        installed = is_installed()
+        if not _winsw_ok(exe):                  # missing, or not the file it should be: checked on every install
+            if exe.exists():
+                print(f"The background helper {exe} isn't the expected file (its checksum differs); replacing it.")
+                if installed:
+                    subprocess.run(["sc", "stop", SERVICE], capture_output=True)
+                    time.sleep(3)
             print(f"Downloading the helper that runs CamAgent in the background (WinSW) to {exe}")
             _download_checked(WINSW_URL, WINSW_SHA256, exe)
         xml.write_text(_win_xml(config_path), encoding="utf-8")
-        if is_installed():
+        if installed:
             _run([exe, "stop"], check=False)
         else:
             _run([exe, "install"])
+        _win_apply_account(config_path)
         _run([exe, "start"])
         print(f"CamAgent now runs in the background and starts by itself with the computer. Its log is in "
               f"{base_dir() / 'logs'} (or open CamAgent > Show the recent log).")
@@ -197,8 +286,21 @@ def is_installed() -> bool:
 
 
 def refresh_unit(config_path=None):
-    """Linux: rewrite the systemd unit so service settings added in newer versions apply."""
-    if os.name == "nt" or not UNIT_PATH.exists():
+    """Rewrite the service's settings so ones added in newer versions apply (after an update, or the installer):
+    the systemd unit on Linux; on Windows the WinSW settings and the account it runs as (0.17)."""
+    if os.name == "nt":
+        if not is_installed():
+            return
+        try:
+            from .config import migrate_account
+            migrate_account(config_path)        # the sign-in out of camagent.toml, before the service can read it
+        except Exception:  # noqa: BLE001
+            pass
+        exe, xml = _win_paths()
+        xml.write_text(_win_xml(Path(config_path or default_config_path())), encoding="utf-8")
+        _win_apply_account(config_path)
+        return
+    if not UNIT_PATH.exists():
         return
     UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
     _run(["systemctl", "daemon-reload"], check=False)
@@ -235,7 +337,8 @@ def update_schedule_installed() -> bool:
 
 
 def install_update_schedule(config_path=None):
-    """Nightly around 3 AM (with a random delay so agents don't all check at once), as root / SYSTEM."""
+    """Nightly around 3 AM (with a random delay so agents don't all check at once), as root / SYSTEM (installing
+    needs those rights; the service itself runs as its own limited account)."""
     _require_admin()
     config_path = Path(config_path or default_config_path())
     if os.name == "nt":

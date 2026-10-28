@@ -2,12 +2,19 @@
 
 The small agent hosts run next to their IP camera (Windows PC or Raspberry Pi / Linux). It pulls the camera's
 RTSP stream and pushes it to YonderView over SRT, and keeps an MQTT connection for commands (PTZ, ONVIF
-controls) and telemetry (health, weather stations, camera alarms). Current version: **0.16.5**. Public repo:
+controls) and telemetry (health, weather stations, camera alarms). Current version: **0.17.0**. Public repo:
 github.com/msullivan1993/camagent. Releases are git tags (`v0.9.1`); agents update themselves nightly (~3 AM,
 with rollback). **Since 0.16 agents install only signed releases** (camagent/release.py, Ed25519 key in Mike's WSL
 `~/.config/camagent-release/`, passphrase-protected). Releasing: bump `__version__`, push, tag `vX.Y.Z` and push the
 tag (CI tests it and makes a *draft* release), then Mike runs `.venv/bin/python scripts/sign_release.py sign vX.Y.Z`
 (builds the wheel from the tag, signs SHA256SUMS, uploads, publishes). Never attach release files any other way.
+**Since 0.17 the signature covers the dependencies:** `requirements.lock` (exact versions + every file's SHA-256 from
+PyPI and piwheels) ships in each release as `camagent-<v>-requirements.lock`, listed in SHA256SUMS; agents and the
+installers install it with `--require-hashes --only-binary :all:`. After changing dependencies (pyproject ranges,
+upper bounds) or to take updates: `.venv/bin/pip install -U -e .`, run the tests, `.venv/bin/python
+scripts/lock_requirements.py`, commit the lock. The installers carry a copy of `scripts/verify_release.py`
+(stdlib Ed25519 check; test_v17 fails if the copies differ). onvif-zeep (sdist only on PyPI) is kept inside as
+`camagent/_onvif`.
 
 ## Layout
 `camagent/` package: agent.py (per-camera agent: stream, MQTT, telemetry, watchers) · config.py (TOML config,

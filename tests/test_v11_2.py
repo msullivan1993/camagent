@@ -23,7 +23,7 @@ fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
 
 c = {s: dict(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS + config.MAIN_SECTIONS}
 c["camera"].update(rtsp_url="rtsp://10.0.0.5/main")
-c["platform"].update(camera_id="au_0001", ingest_host="127.0.0.1", srt_password="PW")
+c["platform"].update(camera_id="au_0001", ingest_host="127.0.0.1", srt_password="PW", srt_passphrase="phrase0123")
 c["stream"].update(ffmpeg=str(fake), audio=True, stall_seconds=2)
 
 with mock.patch("camagent.uplink.find_ffmpeg", lambda p: str(fake)):

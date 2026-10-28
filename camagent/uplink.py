@@ -111,7 +111,8 @@ class Uplink(threading.Thread):
         cam, s = self.cfg["camera"], self.cfg["stream"]
         ffmpeg = find_ffmpeg(s.get("ffmpeg", ""))
         if not ffmpeg:
-            raise RuntimeError("ffmpeg not found; install it or set [stream] ffmpeg in the config")
+            from .prereqs import unsafe_ffmpeg
+            raise RuntimeError(unsafe_ffmpeg() or "ffmpeg not found; install it or set [stream] ffmpeg in the config")
         cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "warning",
                "-progress", "pipe:1", "-nostats"]
         if s.get("wallclock_timestamps", True):
@@ -198,7 +199,7 @@ class Uplink(threading.Thread):
         while not self._halt.is_set():
             try:
                 cmd = self.command()
-            except RuntimeError as e:
+            except (RuntimeError, ValueError) as e:
                 self.stats["last_error"] = str(e)
                 self.log.error("%s", e)
                 self._halt.wait(30)

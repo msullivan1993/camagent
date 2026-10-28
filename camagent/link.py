@@ -3,8 +3,10 @@
 Like signing in a TV app: camagent shows a short code, the host enters it at yonderview.net/link in their own
 browser (signed in there, with two-factor) and approves this computer. camagent never sees their password; it
 gets a token that can only list the cameras they own or co-own and fetch a camera's connection settings (the same
-settings block as the camera's Connection page). The token is kept in camagent.toml [account], next to the camera
-passwords and protected the same way. Unlink the computer from your profile on yonderview.net to revoke it."""
+settings block as the camera's Connection page). The token is kept in account.toml, which only administrators can
+read. Signing out revokes it on the website too; unlinking the computer at yonderview.net/link does the same.
+Website 1.118+: a computer may set up only the cameras the person allowed it (the others are listed but marked;
+connecting one answers with the address where they can allow it), and a token unused for 90 days stops working."""
 import json
 import socket
 import time
@@ -22,6 +24,10 @@ class LinkError(Exception):
 
 class NotSignedIn(LinkError):
     pass
+
+
+SIGNED_OUT = ("This computer is signed out of YonderView (it was unlinked on the website, or unused for 90 days). "
+              "Sign in again.")
 
 
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -113,24 +119,45 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
 
 
 def cameras(site, token):
-    """The cameras this account owns or co-owns: [{slug, name, place, has_credentials, enabled, max_height}]."""
+    """The cameras this account owns or co-owns: [{slug, name, place, has_credentials, enabled, max_height,
+    allowed}]. "allowed": False = this computer may not set that camera up until the person allows it on the
+    website (servers before 1.118 don't say: allowed)."""
     status, d = _call(site, "GET", "/api/agent/cameras", token=token)
     if status == 401:
-        raise NotSignedIn(d.get("error") or "This computer isn't signed in any more. Sign in again.")
+        raise NotSignedIn(SIGNED_OUT)
     if status != 200:
         raise LinkError(f"Couldn't get your cameras from YonderView (it answered {status}). Try again in a minute.")
-    return d.get("cameras") or []
+    cams = [c for c in d.get("cameras") or [] if isinstance(c, dict) and c.get("slug")]
+    for c in cams:
+        c["allowed"] = c.get("allowed") is not False
+    return cams
 
 
 def connect(site, token, slug, replace=False):
-    """A camera's settings block. Returns ("ok", block, camera info) or ("confirm", message, None) when the camera
-    already has connection settings (new ones disconnect whatever uses the old ones)."""
+    """A camera's settings block. Returns ("ok", block, camera info), ("confirm", message, None) when the camera
+    already has connection settings (new ones disconnect whatever uses the old ones), or ("approve", address,
+    message) when this computer isn't allowed to set that camera up yet (the person allows it at that address)."""
     status, d = _call(site, "POST", f"/api/agent/cameras/{slug}/connect", {"replace": bool(replace)}, token=token)
     if status == 200 and d.get("settings_block"):
         return "ok", d["settings_block"], d.get("camera") or {}
     if status == 409 and d.get("needs_confirm"):
         return "confirm", d.get("error", ""), None
+    if status == 403 and d.get("needs_approval"):
+        url = str(d.get("approve_url") or "")
+        if not url.startswith(site.rstrip("/") + "/"):
+            url = site.rstrip("/") + "/link"         # only ever show an address on the YonderView site itself
+        return "approve", url, str(d.get("error") or "")
     if status == 401:
-        raise NotSignedIn(d.get("error") or "This computer isn't signed in any more. Sign in again.")
+        raise NotSignedIn(SIGNED_OUT)
     raise LinkError(d.get("error") or f"Couldn't get the camera's connection settings (YonderView answered {status}). "
                                      "Try again in a minute.")
+
+
+def sign_out(site, token):
+    """Revoke this computer's token on the website. True if it's revoked (or already wasn't valid); False if the
+    website couldn't be reached or said something else (the caller still forgets the token here)."""
+    try:
+        status, _ = _call(site, "POST", "/api/agent/signout", {}, token=token)
+    except LinkError:
+        return False
+    return status in (200, 401)

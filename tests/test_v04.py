@@ -86,7 +86,7 @@ with mock.patch("urllib.request.urlopen", side_effect=OSError("404")):
 from camagent.agent import CameraAgent  # noqa: E402
 c2 = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 c2["camera"].update(host="h", rtsp_url="rtsp://h/x", ptz=False, fps_configured=25)
-c2["platform"].update(camera_id="ag_1", ingest_host="i", srt_password="s", mqtt_host="m", mqtt_password="p")
+c2["platform"].update(camera_id="ag_1", ingest_host="i", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m", mqtt_password="p")
 a = CameraAgent(c2)
 a._apply_config(json.dumps({"max_height": 1080, "declined": "This camera is sending 1440p; its limit is 1080p."}))
 assert a.status()["declined"].startswith("This camera") and a._info()["uplink"]["fps_configured"] == 25

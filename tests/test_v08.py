@@ -81,7 +81,7 @@ assert img.Move.call_args.args[0]["Focus"]["Continuous"]["Speed"] == 0.5 and img
 # 5. The agent tells real position reports from fixed placeholder values
 cfg = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 cfg["camera"].update(host="h", rtsp_url="rtsp://h/x", ptz=True)
-cfg["platform"].update(camera_id="pz_8", ingest_host="i", srt_password="s", mqtt_host="m", mqtt_password="p")
+cfg["platform"].update(camera_id="pz_8", ingest_host="i", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m", mqtt_password="p")
 for reports, expected in (([0.25] * 8, "fake"), ([0.25, 0.25, 0.4, 0.4, 0.4], "real")):
     a = CameraAgent(cfg)
     a.ptz = mock.Mock(connected=False, moves=0, last_activity=0.0)

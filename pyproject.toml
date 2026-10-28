@@ -8,20 +8,23 @@ dynamic = ["version"]
 description = "YonderView camera site agent: SRT uplink and PTZ control over MQTT"
 readme = "README.md"
 requires-python = ">=3.11"
+# Ranges for development and testing. Hosts install the exact versions in requirements.lock (with their checksums),
+# which every signed release carries (0.17; scripts/lock_requirements.py makes it).
 dependencies = [
-    "onvif-zeep==0.2.12",
+    "zeep>=4.2,<5",            # ONVIF (camagent/_onvif is onvif-zeep 0.2.12, kept inside camagent since 0.17)
     "paho-mqtt>=2.1,<3",
-    "cryptography>=42",        # checks the release signature before updating (0.16)
+    "cryptography>=42,<52",    # checks the release signature before updating (0.16)
 ]
 
 [project.scripts]
 camagent = "camagent.__main__:main"
 
 [tool.setuptools]
-packages = ["camagent"]
+packages = ["camagent", "camagent._onvif"]
 
 [tool.setuptools.package-data]
 camagent = ["wsdl/*"]
+"camagent._onvif" = ["LICENSE"]
 
 [tool.setuptools.dynamic]
 version = { attr = "camagent.__version__" }

@@ -12,7 +12,7 @@ from camagent.controls import Controls, NotAllowed, OnvifSession  # noqa: E402
 
 cfg = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
 cfg["camera"].update(host="h", rtsp_url="rtsp://h/x", username="u", password="p", ptz=False)
-cfg["platform"].update(camera_id="fx_1", ingest_host="i", srt_password="s", mqtt_host="m", mqtt_password="p")
+cfg["platform"].update(camera_id="fx_1", ingest_host="i", srt_password="s", srt_passphrase="phrase0123", mqtt_host="m", mqtt_password="p")
 
 # 1. A fixed camera gets controls through a plain ONVIF session
 a = CameraAgent(cfg)

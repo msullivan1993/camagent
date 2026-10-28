@@ -87,11 +87,6 @@ def run(config_path=None, camera_id=None):
             first = ffmpeg
         r.line(OK, "ffmpeg (video tool)", first)
         from . import prereqs
-        if not prereqs.admin_only_location(ffmpeg):
-            r.line(FAIL, "ffmpeg location", f"{ffmpeg} is in a folder any user of this computer can change, and "
-                   "CamAgent runs it with full system rights (a security risk)",
-                   "install it for all users. In an administrator window type: winget install -e --id Gyan.FFmpeg "
-                   f"--scope machine. Then: {CHANGE}")
         if not prereqs.admin_only_location(sys.base_prefix):
             r.line(FAIL, "Python location", f"CamAgent's Python ({sys.base_prefix}) is in a folder any user of this "
                    "computer can change (a security risk)",
@@ -102,8 +97,17 @@ def run(config_path=None, camera_id=None):
                    "install the full version (Windows: winget install -e --id Gyan.FFmpeg --scope machine; "
                    "Linux: sudo apt install ffmpeg)")
     else:
-        r.line(FAIL, "ffmpeg (video tool)", "not found; CamAgent needs it to send video", camera.ffmpeg_install_hint())
+        from . import prereqs
+        if prereqs.unsafe_ffmpeg():          # Windows: only a copy a normal user could replace (0.17: not used)
+            r.line(FAIL, "ffmpeg location", prereqs.unsafe_ffmpeg().replace("not using", "not sending video with", 1),
+                   "install it for all users. In an administrator window type: winget install -e --id Gyan.FFmpeg "
+                   "--scope machine. Then restart CamAgent")
+        else:
+            r.line(FAIL, "ffmpeg (video tool)", "not found; CamAgent needs it to send video", camera.ffmpeg_install_hint())
     ffprobe = camera.find_ffprobe(ffmpeg)
+    _check_privacy(r)
+    if os.name == "nt":
+        _check_windows_account(r)
 
     for cfg in cams:
         _check_camera(r, cfg, ffprobe)
@@ -150,6 +154,41 @@ def run(config_path=None, camera_id=None):
                "to support (Report a problem on yonderview.net)")
 
     return _summary(r)
+
+
+def _check_privacy(r):
+    """Linux: other users of this computer can see every program's command line (ps), and ffmpeg's holds the camera's
+    login and the stream's secrets. hidepid=2 on /proc hides other users' programs."""
+    if os.name == "nt":
+        return
+    try:
+        opts = next((line.split()[3] for line in open("/proc/mounts", encoding="utf-8")
+                     if line.split()[1:2] == ["/proc"]), "")
+    except (OSError, IndexError):
+        return
+    if not any(o in opts.split(",") for o in ("hidepid=2", "hidepid=invisible", "hidepid=1", "hidepid=noaccess")):
+        r.line(WARN, "Privacy from other users", "other users of this computer can see ffmpeg's command line, which "
+               "holds the camera's login and the stream's secrets",
+               "only if others have accounts on this computer: hide their view of programs (add hidepid=2 to /proc "
+               "in /etc/fstab: proc /proc proc defaults,hidepid=2 0 0), and give CamAgent a camera login that can "
+               "only watch (not change settings) where the camera allows it")
+
+
+def _check_windows_account(r):
+    """0.17: the service runs as its own limited account, not SYSTEM."""
+    try:
+        out = subprocess.run(["sc", "qc", service.SERVICE], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    m = next((line.split(":", 1)[1].strip() for line in out.splitlines() if "SERVICE_START_NAME" in line), "")
+    if not m:
+        return
+    if m.lower() == "localsystem":
+        r.line(WARN, "Service account", "CamAgent runs with full system rights (LocalSystem)",
+               "open CamAgent and choose Start CamAgent again (it then runs as its own limited account); if "
+               "[agent] windows_account = \"system\" is set in camagent.toml on purpose, ignore this")
+    else:
+        r.line(OK, "Service account", m)
 
 
 def _check_convert(r, cfg, cid):

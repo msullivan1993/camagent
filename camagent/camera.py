@@ -134,7 +134,7 @@ def friendly_error(e) -> str:
 
 
 def onvif_connect(host, port, user, password):
-    from onvif import ONVIFCamera            # imported here so discovery works even if onvif is broken
+    from ._onvif import ONVIFCamera          # imported here so discovery works even if onvif is broken
     # no_cache: the WSDLs are bundled, and the default cache lives in the home folder, which the Linux
     # service account doesn't have (that made every ONVIF connection fail with "Permission denied")
     return ONVIFCamera(host, int(port), user, password, str(WSDL_DIR), no_cache=True)

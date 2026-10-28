@@ -28,7 +28,7 @@ assert (d / "cameras" / "test1234.toml").exists()
 # 3. add a second camera
 c2 = {s: dict(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS}
 c2["camera"].update(host="192.168.1.11", rtsp_url="rtsp://192.168.1.11/live", ptz=False)
-c2["platform"].update(camera_id="ridge_0002", ingest_host="ingest.yonderview.net", srt_password="s2",
+c2["platform"].update(camera_id="ridge_0002", ingest_host="ingest.yonderview.net", srt_password="s2", srt_passphrase="phrase0123",
                       mqtt_host="mqtt.yonderview.net", mqtt_password="m2")
 config.save_camera(c2, main)
 m, cams, _ = config.load_all(main)
