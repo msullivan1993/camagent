@@ -11,7 +11,7 @@ import time
 
 import paho.mqtt.client as mqtt
 
-from . import __version__
+from . import __version__, prereqs
 from .config import scrub
 from .ptz import PTZ
 from .uplink import Uplink
@@ -309,6 +309,7 @@ class CameraAgent:
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
             "versions": self.versions.capability() if self.versions else {"ok": False},
+            **({"notices": n} if (n := prereqs.notices()) else {}),     # shown on the camera's Health tab
             **({"weather": {"station": {"kind": self.weather.kind, "uid": self.weather.uid, "name": self.weather_name},
                             "readings": list(self.weather_pending)}}
                if self.weather and self.weather_pending and self.weather.uid else {}),

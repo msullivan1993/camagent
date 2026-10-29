@@ -200,10 +200,12 @@ with tempfile.TemporaryDirectory() as d:
     calls = []
     with mock.patch.object(service.subprocess, "run", side_effect=lambda cmd, **k: calls.append(cmd) or
                            NS(returncode=0, stdout="", stderr="")), \
-            mock.patch.object(service, "_win_grant_access") as grant, quiet:
+            mock.patch.object(service, "_win_grant_access") as grant, quiet, \
+            mock.patch.object(prereqs, "unsafe_python", return_value=""):
         m["agent"]["windows_account"] = "virtual"; config.save_main(m, main)
         assert service._win_apply_account(main)
-        assert calls[-1] == ["sc", "config", "camagent", "obj=", "NT SERVICE\\camagent", "password=", ""]
+        # 0.17.1: no "password=" (an empty one made Windows refuse the account: error 1057)
+        assert calls[-1] == ["sc", "config", "camagent", "obj=", "NT SERVICE\\camagent"]
         assert grant.call_args[0][0] == service.service_sid()
         m["agent"]["windows_account"] = "system"; config.save_main(m, main)
         service._win_apply_account(main)

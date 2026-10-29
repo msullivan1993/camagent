@@ -183,7 +183,11 @@ def _check_windows_account(r):
     m = next((line.split(":", 1)[1].strip() for line in out.splitlines() if "SERVICE_START_NAME" in line), "")
     if not m:
         return
-    if m.lower() == "localsystem":
+    from .prereqs import unsafe_python
+    blocker = unsafe_python()
+    if m.lower() == "localsystem" and blocker:
+        r.line(WARN, "Service account", "CamAgent runs with full system rights (LocalSystem)", blocker)
+    elif m.lower() == "localsystem":
         r.line(WARN, "Service account", "CamAgent runs with full system rights (LocalSystem)",
                "open CamAgent and choose Start CamAgent again (it then runs as its own limited account); if "
                "[agent] windows_account = \"system\" is set in camagent.toml on purpose, ignore this")

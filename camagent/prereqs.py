@@ -37,6 +37,39 @@ def admin_only_location(path) -> bool:
     return any(r and p.startswith(os.path.normcase(os.path.abspath(r)) + os.sep) for r in roots)
 
 
+def base_python() -> str:
+    """The Python CamAgent's venv was made from (the one that actually runs: the venv's python.exe only starts it).
+    Read from pyvenv.cfg ("home"), else what Python itself reports."""
+    cfg = Path(sys.prefix) / "pyvenv.cfg"
+    try:
+        for line in cfg.read_text(encoding="utf-8", errors="replace").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip().lower() == "home" and value.strip():
+                exe = Path(value.strip()) / ("python.exe" if WINDOWS else "python3")
+                return str(exe)
+    except OSError:
+        pass
+    return getattr(sys, "_base_executable", "") or sys.executable
+
+
+def unsafe_python() -> str:
+    """Windows: why the Python CamAgent runs on isn't safe for the service (a copy installed for one user, which
+    that user could change, and which CamAgent's own limited account can't even open), or ""."""
+    if not WINDOWS:
+        return ""
+    exe = base_python()
+    if admin_only_location(exe):
+        return ""
+    return (f"CamAgent runs on a Python installed for one user only ({exe}), which that user could change. It "
+            "keeps running with full system rights (LocalSystem) until that's fixed: run CamAgent's installer "
+            "again (it installs Python for all users and moves CamAgent onto it; cameras and settings stay)")
+
+
+def notices() -> list:
+    """Problems the host should see on the camera's Health tab (telemetry), in plain words."""
+    return [n for n in (unsafe_python(), unsafe_ffmpeg()) if n]
+
+
 _warned_unsafe = set()
 _refused = {}                       # the ffmpeg last refused, and why (for the status, telemetry and doctor)
 

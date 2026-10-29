@@ -187,11 +187,20 @@ def _win_grant_access(sid):
 
 
 def _win_apply_account(config_path=None):
-    """Run the service as its own account (see WINDOWS_ACCOUNTS). Takes effect at its next start."""
+    """Run the service as its own account (see WINDOWS_ACCOUNTS). Takes effect at its next start. A limited account
+    only when everything the service runs is in an all-users folder: otherwise (e.g. CamAgent made long ago on a
+    one-user Python) it couldn't even start (0.17.0 on such a PC: "No Python at ..." every few seconds), so it stays
+    LocalSystem and says why (doctor, the camera's Health tab)."""
+    from .prereqs import unsafe_python
     name, sid, mode = windows_account(config_path)
+    blocker = unsafe_python() if sid else ""
+    if blocker:
+        print(f"  CamAgent stays on LocalSystem for now: {blocker}.")
+        name, sid = WINDOWS_ACCOUNTS["system"], None
     if sid:
         _win_grant_access(sid)
-    cmd = ["sc", "config", SERVICE, "obj=", name] + (["password=", ""] if sid else [])
+    # no "password=" at all: an empty one made Windows refuse the virtual account (error 1057, 0.17.0)
+    cmd = ["sc", "config", SERVICE, "obj=", name]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
         print(f"  (couldn't set the account CamAgent runs as to {name}: {(r.stdout + r.stderr).strip()[-200:]})")
