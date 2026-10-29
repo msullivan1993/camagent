@@ -55,4 +55,24 @@ with mock.patch.object(prereqs, "notices", return_value=["fix me"]):
     assert A.CameraAgent._info(fake)["notices"] == ["fix me"]
 with mock.patch.object(prereqs, "notices", return_value=[]):
     assert "notices" not in A.CameraAgent._info(fake)
+# an old setting pointing into a user's folder: the limited account may not even look there (Access is denied).
+# That's "no file", never a crash (0.17.1 crashed at start on bcem_catlettsburg's PC).
+real_isfile = os.path.isfile
+
+
+def denied(p):
+    if "Users" in str(p):
+        raise PermissionError(5, "Access is denied", str(p))
+    return real_isfile(p)
+
+
+with mock.patch.object(prereqs.os.path, "isfile", side_effect=denied), \
+        mock.patch.object(prereqs, "which", return_value=None), mock.patch.object(prereqs, "WINDOWS", True), \
+        mock.patch.object(prereqs, "_windows_ffmpeg_candidates", return_value=iter([r"C:\Program Files\WinGet\Packages\Gyan.FFmpeg\bin\ffmpeg.exe"])), \
+        mock.patch.object(prereqs, "admin_only_location", side_effect=lambda p: "Program Files" in str(p)):
+    assert not prereqs.is_file(r"C:\Users\Admin\AppData\Local\Microsoft\WinGet\Links\ffmpeg.EXE")
+    got = prereqs.find_ffmpeg(r"C:\Users\Admin\AppData\Local\Microsoft\WinGet\Links\ffmpeg.EXE")
+    assert "Program Files" in got, got
+    from camagent import camera
+    assert camera.find_ffprobe(r"C:\Users\Admin\ffmpeg.exe") == ""
 print("v0.17.1 OK")

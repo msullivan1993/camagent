@@ -23,6 +23,15 @@ def which(name):
     return None
 
 
+def is_file(path) -> bool:
+    """Is there a file here? False (never an error) when this account may not even look: the service's own limited
+    account can't see into a user's folder, where an old setting may still point (0.17.1: that crashed CamAgent)."""
+    try:
+        return os.path.isfile(path)
+    except (OSError, ValueError):
+        return False
+
+
 def admin_only_location(path) -> bool:
     """Windows: is this file somewhere only administrators can change (Program Files, Windows, camagent's own
     locked folder)? The service runs ffmpeg as SYSTEM, so an ffmpeg a normal user could replace (a per-user winget
@@ -97,7 +106,7 @@ def find_ffmpeg(configured=""):
     skipped when it sits where a normal user could replace it, and "" is returned if there's no other (the reason:
     unsafe_ffmpeg())."""
     picks = []
-    if configured and Path(configured).exists():
+    if configured and is_file(configured):
         picks.append(configured)
     found = which("ffmpeg")
     if found:

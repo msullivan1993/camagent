@@ -203,7 +203,8 @@ def find_ffprobe(ffmpeg: str = "") -> str:
     if ffmpeg:
         p = Path(ffmpeg)
         candidate = p.with_name(p.name.replace("ffmpeg", "ffprobe"))
-        if candidate.exists():
+        from .prereqs import is_file
+        if is_file(candidate):
             return str(candidate)
     from .prereqs import which
     return which("ffprobe") or ""

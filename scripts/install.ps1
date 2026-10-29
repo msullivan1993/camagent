@@ -23,12 +23,13 @@ function Refresh-Path {
                 (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Links")
 }
 
-function Winget-Install($id) {
+function Winget-Install($id, $extra = "") {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw "winget (Windows' app installer) isn't available. Update 'App Installer' from the Microsoft Store, or install '$id' yourself, then run this again."
     }
     # for all users (Program Files): the service runs these, so a normal user mustn't be able to change them
-    winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent
+    if ($extra) { winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent $extra }
+    else { winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent }
     if ($LASTEXITCODE -ne 0) { Write-Host "    (winget returned code $LASTEXITCODE for $id; it may already be installed, possibly for one user only)" }
     Refresh-Path
 }
@@ -48,6 +49,9 @@ function Find-Python {
     }
     $p = Get-Command python -ErrorAction SilentlyContinue
     if ($p) { $cands += $p.Source }
+    # all-users installs, found directly: a Python winget just installed isn't on this window's PATH yet
+    $cands += Get-ChildItem (Join-Path $env:ProgramFiles "Python3*\python.exe") -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | ForEach-Object { $_.FullName }
     foreach ($exe in $cands | Select-Object -Unique) {
         if (-not (Test-AllUsersPath $exe)) { Write-Host "    (skipping $exe : it's installed for one user only, and CamAgent needs one installed for all users)"; continue }
         $ok = & $exe -c "import sys;print(1 if sys.version_info>=(3,11) else 0)" 2>$null
@@ -59,15 +63,26 @@ function Find-Python {
 Write-Host "==> Checking for Python 3.11 or newer"
 $py = Find-Python
 if (-not $py) {
-    Winget-Install "Python.Python.3.12"
-    $py = Find-Python
-    if (-not $py) { throw "Python was installed, but this window can't see it yet. Close it, open a new PowerShell as administrator, and run the install line again." }
+    # 3.12 first; if that fails (e.g. Windows' installer refuses, code 1603, because the same version is already
+    # installed for one user), 3.13: CamAgent's signed package list covers both
+    foreach ($id in @("Python.Python.3.12", "Python.Python.3.13")) {
+        Winget-Install $id
+        $py = Find-Python
+        if ($py) { break }
+    }
+    if (-not $py) { throw "Python couldn't be installed for all users (see the messages above). Install Python 3.12 or 3.13 from python.org with 'Install for all users' ticked, then run the install line again in a new administrator window." }
 }
 Write-Host "    $py"
 
 Write-Host "==> Checking ffmpeg"
 $ff = Get-Command ffmpeg -ErrorAction SilentlyContinue
-if (-not $ff -or -not (Test-AllUsersPath $ff.Source)) { Winget-Install "Gyan.FFmpeg" }
+if (-not $ff -or -not (Test-AllUsersPath $ff.Source)) {
+    $machineFf = Get-ChildItem (Join-Path $env:ProgramFiles "WinGet\Packages\Gyan.FFmpeg*\*\bin\ffmpeg.exe") -ErrorAction SilentlyContinue
+    if (-not $machineFf) {
+        # one installed for one user only makes winget think it's done: --force puts the all-users copy in too
+        if ($ff) { Winget-Install "Gyan.FFmpeg" "--force" } else { Winget-Install "Gyan.FFmpeg" }
+    }
+}
 
 Write-Host "==> Setting up CamAgent's folder"
 # The folder holds passwords and the code the nightly update runs as SYSTEM: lock it to Administrators and SYSTEM
@@ -349,16 +364,22 @@ try {
 
 
 # an installed service picks up this version's settings and its own limited account (as after an update)
-if (Get-Service -Name camagent -ErrorAction SilentlyContinue) {
+$hadService = [bool](Get-Service -Name camagent -ErrorAction SilentlyContinue)
+if ($hadService) {
     & $venvPy -I -c "from camagent import service; service.refresh_unit()"
     if ($LASTEXITCODE -ne 0) { Write-Host "    (couldn't refresh the background service's settings; open CamAgent and choose Start CamAgent)" }
+    # already set up here: start it again on the new version, so the cameras don't stay off after the install
+    Write-Host "==> Starting CamAgent again"
+    Restart-Service camagent -ErrorAction SilentlyContinue
+    if (-not $?) { Start-Service camagent -ErrorAction SilentlyContinue }
 }
 
 Write-Host ""
 & $venvPy -I -m camagent version
 Write-Host ""
 if (Test-Path (Join-Path $Base "camagent.toml")) {
-    Write-Host "Your existing settings were kept. To start using the new version now, type:  camagent restart"
+    if ($hadService) { Write-Host "Your existing settings were kept, and CamAgent is running again on this version (camagent list shows it)." }
+    else { Write-Host "Your existing settings were kept. To start CamAgent in the background: type camagent and choose Start CamAgent." }
 } else {
     Write-Host "CamAgent is installed. Next: type camagent in this window (or open CamAgent from the Start menu)"
     Write-Host "and choose 'Add a camera'."
