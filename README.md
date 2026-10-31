@@ -167,8 +167,9 @@ testing only.
 **The background service's account.** On Linux it runs as the `camagent` user in a systemd sandbox. On Windows
 it runs as LocalSystem, as it always has (0.17.3). To run it as its own limited account, `NT SERVICE\camagent`,
 instead (it can read CamAgent's folder and write only its logs, `state` and `status.json`; the YonderView sign-in,
-`account.toml`, stays readable by administrators only), set `windows_account = "virtual"` under `[agent]` in
-`camagent.toml` and choose Start CamAgent again. That needs Python and ffmpeg installed for all users (the
+`account.toml`, stays readable by administrators only), set `windows_account = "limited"` under `[agent]` in
+`camagent.toml` and choose Start CamAgent again (0.17.0-0.17.2 wrote `"virtual"` there as their default; it now
+means the default). That needs Python and ffmpeg installed for all users (the
 installer does that); CamAgent stays on LocalSystem and says why when they aren't. An ffmpeg in a folder any user
 can change (e.g. `C:\ffmpeg`) is used with a warning (`camagent doctor`, the camera's Health tab).
 
@@ -267,7 +268,7 @@ Still stuck? Choose **Show the recent log**, and send it with **Report a problem
 
 The config contains passwords and is readable only by administrators and the service. On Linux the service runs
 as its own `camagent` user in a systemd sandbox (read-only system, no home folders, no extra privileges); it can
-write only `/var/lib/camagent`. On Windows it runs as LocalSystem by default; with `windows_account = "virtual"` it
+write only `/var/lib/camagent`. On Windows it runs as LocalSystem by default; with `windows_account = "limited"` it
 runs as `NT SERVICE\camagent` and can write only `logs`, `state` and `status.json` in `C:\ProgramData\camagent`.
 On Linux, after upgrading from 0.1.x, run `sudo camagent install-service` once so `camagent list` can show live status.
 

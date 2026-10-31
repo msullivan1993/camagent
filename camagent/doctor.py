@@ -183,7 +183,7 @@ def _check_windows_account(r):
     if not m:
         return
     if m.lower() == "localsystem":
-        r.line(OK, "Service account", "LocalSystem (the default; [agent] windows_account = \"virtual\" in "
+        r.line(OK, "Service account", "LocalSystem (the default; [agent] windows_account = \"limited\" in "
                "camagent.toml runs it as its own limited account)")
     else:
         r.line(OK, "Service account", m)

@@ -202,7 +202,9 @@ with tempfile.TemporaryDirectory() as d:
                            NS(returncode=0, stdout="", stderr="")), \
             mock.patch.object(service, "_win_grant_access") as grant, quiet, \
             mock.patch.object(prereqs, "unsafe_python", return_value=""):
-        m["agent"]["windows_account"] = "virtual"; config.save_main(m, main)
+        m["agent"]["windows_account"] = "virtual"; config.save_main(m, main)       # 0.17.0-0.17.2's saved default
+        assert service.windows_account(main)[2] == "system"
+        m["agent"]["windows_account"] = "limited"; config.save_main(m, main)       # chosen (0.17.4)
         assert service._win_apply_account(main)
         # 0.17.1: no "password=" (an empty one made Windows refuse the account: error 1057)
         assert calls[-1] == ["sc", "config", "camagent", "obj=", "NT SERVICE\\camagent"]

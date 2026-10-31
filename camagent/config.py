@@ -62,7 +62,7 @@ DEFAULTS = {
         "telemetry_interval_s": 30,
         "stale_command_s": 5,
         "windows_account": "system",   # Windows: the account the service runs as: system (default, as before
-                                       # 0.17), or the limited "virtual" / "localservice" (opt-in, 0.17.3)
+                                       # 0.17), or the limited "limited" / "localservice" (opt-in, 0.17.4)
     },
     "account": {
         "site": "https://yonderview.net",   # where camagent signs in (device sign-in)

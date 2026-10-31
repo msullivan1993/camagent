@@ -16,7 +16,7 @@ WINSW_SHA256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
 # Windows (0.17): the service runs as its own limited account, not SYSTEM, so if a bad camera stream ever broke
 # ffmpeg it couldn't take over the computer. [agent] windows_account in camagent.toml picks it:
 WINDOWS_ACCOUNTS = {
-    "virtual": "NT SERVICE\\camagent",          # a "virtual account" just for this service (opt-in, 0.17.3)
+    "limited": "NT SERVICE\\camagent",          # a "virtual account" just for this service (opt-in, 0.17.4)
     "localservice": "NT AUTHORITY\\LocalService",   # shared with other services (opt-in)
     "system": "LocalSystem",                      # the default: as before 0.17 (full system rights)
 }
@@ -154,9 +154,11 @@ def windows_account(config_path=None):
         mode = str(load_or_defaults(config_path)["agent"].get("windows_account") or "system").strip().lower()
     except Exception:  # noqa: BLE001 - a broken settings file: as before 0.17
         mode = "system"
+    # "virtual" is what 0.17.0-0.17.2 wrote into every settings file as their default, not a host's choice: it means
+    # the default now. The limited account is chosen with "limited" (0.17.4).
     if mode not in WINDOWS_ACCOUNTS:
         mode = "system"
-    sid = {"virtual": service_sid(), "localservice": LOCAL_SERVICE_SID}.get(mode)
+    sid = {"limited": service_sid(), "localservice": LOCAL_SERVICE_SID}.get(mode)
     return WINDOWS_ACCOUNTS[mode], sid, mode
 
 
