@@ -155,7 +155,27 @@ def _make_login(cam):
             return False
     cam["username"], cam["password"] = name, pw
     print(f"  Done: CamAgent signs in to the camera as \"{name}\" (Operator).")
+    _exact_needs_web_user(cam, name, pw)
     return True
+
+
+def _exact_needs_web_user(cam, name, pw):
+    """Amcrest and Dahua keep ONVIF users apart from their normal ones; the exact degrees (exact.py) need a normal
+    user. If the new login is refused there, show its password once so the host can add it."""
+    from . import exact
+    try:
+        maker = camera.onvif_connect(cam["host"], cam["onvif_port"], name, pw).devicemgmt.GetDeviceInformation()
+        if not exact.is_dahua(getattr(maker, "Manufacturer", "")):
+            return
+    except Exception:  # noqa: BLE001
+        return
+    r = exact.Reader(cam["host"], name, pw)
+    if r.read() is not None or r.off != exact.REFUSED_NOTE:
+        return
+    print("  Optional, for exact degrees on the map: this camera keeps ONVIF logins apart from its normal ones.")
+    print("  In the camera's web page, Setup > System > Account > Add, add the same login as a normal user:")
+    print(f"    username {name}   password {pw}   (rights: Operator, or a User with PTZ allowed)")
+    print("  Shown only now. Without it YonderView still works; the map uses the ONVIF position instead.")
 
 
 def _move_test(cam):

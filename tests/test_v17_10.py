@@ -109,7 +109,8 @@ with mock.patch.object(camera, "onvif_connect", connect_with(["admin", "yondervi
     # setup: exists -> "give it a new password?" yes -> SetUser
     cam = {"host": "10.0.0.5", "onvif_port": 80, "username": "", "password": ""}
     answers = iter(["admin", "y"])
-    with mock.patch.object(builtins, "input", lambda *a: next(answers)), mock.patch("getpass.getpass", lambda *a: "adminpw"):
+    with mock.patch.object(builtins, "input", lambda *a: next(answers)), mock.patch("getpass.getpass", lambda *a: "adminpw"), \
+            mock.patch.object(configure, "_exact_needs_web_user", lambda *a: None):
         assert configure._make_login(cam)
     assert cam["username"] == "yonderview" and cam["password"] == made["set"]["Password"] and "create" not in made
     # a wrong admin password: tried once, then setup asks for an existing login
@@ -158,3 +159,18 @@ def timeout_first(*a, **k):
 with mock.patch.object(onvif_pkg, "ONVIFCamera", timeout_first):
     assert camera.onvif_connect("h", 80, "u", "p") == "cam" and tries == [True, None]
 print("v0.17.10 one try OK")
+
+# ---- Amcrest: the new ONVIF login refused for exact degrees -> its password shown once, with the steps ----
+import io, contextlib
+dev = lambda maker: NS(devicemgmt=NS(GetDeviceInformation=lambda: NS(Manufacturer=maker)))
+for maker, read, shown in (("Amcrest", (None, exact.REFUSED_NOTE), True), ("Amcrest", ({"pan": 1.0}, ""), False),
+                           ("HIKVISION", (None, exact.REFUSED_NOTE), False)):
+    class R:
+        def __init__(self, *a, **k): self.off = ""
+        def read(self): self.off = read[1]; return read[0]
+    out = io.StringIO()
+    with mock.patch.object(camera, "onvif_connect", lambda *a: dev(maker)), mock.patch.object(exact, "Reader", R), \
+            contextlib.redirect_stdout(out):
+        configure._exact_needs_web_user({"host": "h", "onvif_port": 80}, "yonderview", "Abcdefgh23456789")
+    assert ("Abcdefgh23456789" in out.getvalue()) is shown, (maker, read, out.getvalue())
+print("v0.17.10 web user note OK")
