@@ -479,8 +479,11 @@ def step_versions(cfg, ffmpeg):
     results = cfg.get("_detected")
     if results is None:
         print("Checking this computer's graphics (up to a minute)...")
-        results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
-                                 size="1920x1080", timeout=20)
+        try:
+            results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
+                                     size="1920x1080", timeout=20)
+        except (OSError, subprocess.SubprocessError):     # ffmpeg missing or broken: as no graphics chip
+            results = []
     gpu = next((m for m, speed in results if speed and m in GPU_METHODS), None)
     if gpu:
         s["versions"] = "auto"
