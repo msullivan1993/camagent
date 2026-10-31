@@ -47,6 +47,7 @@ def main(argv=None):
                     help="install --ref (e.g. a branch) straight from git without checking a signature (testing only)")
     up.add_argument("--auto", action="store_true", help="scheduled run: install only a newer release, verify, roll back if needed")
     up.add_argument("--jitter", type=int, default=0, help=argparse.SUPPRESS)
+    up.add_argument("--if-requested", action="store_true", help=argparse.SUPPRESS)
     w = sub.add_parser("weather", help="add, change or remove a camera's local weather station (beta)")
     w.add_argument("camera", nargs="?")
     pr = sub.add_parser("probe", help="show what a camera can do (focus, day/night, wiper...)")
@@ -78,6 +79,8 @@ def main(argv=None):
         logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                             format="%(asctime)s %(levelname)s %(name)s: %(message)s")
         logging.getLogger("zeep").setLevel(logging.WARNING)
+        from .tools import install_ring
+        install_ring()                              # the recent log, for the camera's Health tab
         from .agent import Supervisor
         Supervisor(cfg_path).run()
 
@@ -151,7 +154,8 @@ def main(argv=None):
 
     elif args.cmd == "update":
         from .update import run
-        run(cfg_path, args.ref, auto=args.auto, jitter=args.jitter, unsigned=args.unsigned)
+        run(cfg_path, args.ref, auto=args.auto, jitter=args.jitter, unsigned=args.unsigned,
+            if_requested=args.if_requested)
 
 
 if __name__ == "__main__":

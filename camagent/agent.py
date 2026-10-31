@@ -27,6 +27,10 @@ REQUIRED_STREAM = [
 ]
 
 
+def _dict(x):
+    return x if isinstance(x, dict) else {}
+
+
 def missing_settings(cfg):
     missing = [f"[{s}] {k}" for s, k in REQUIRED if not cfg[s].get(k)]
     if cfg["stream"].get("enabled", True):
@@ -64,6 +68,8 @@ class CameraAgent:
             from .versions import Versions
             self.versions = Versions(cfg, self.uplink)
         self.ptz = PTZ(cfg) if cfg["camera"].get("ptz", True) else None
+        from .follow import Follower
+        self.follower = Follower(self) if cfg["camera"].get("host") else None
         self.ptz_position = None       # last reported PTZ position (pan/tilt/zoom), for the map direction
         self.position_kind = "unknown" # "real" once the reported position changes with movement; "fake" if it never does
         self.controls = self.session = None
@@ -212,10 +218,34 @@ class CameraAgent:
         if self.server["declined"]:
             self.log.error("YonderView declined this camera's video: %s", self.server["declined"])
 
+    TOOL_OPS = ("tool_log", "tool_doctor", "tool_restart", "tool_update")
+
+    def _tool(self, op, req):
+        """The remote tools on the camera's Health tab (the website lets only the camera's owners use them)."""
+        from . import tools
+        if op == "tool_log":
+            return {"output": tools.recent_log(self.cam_id)}
+        if op == "tool_restart":
+            return tools.restart_soon()
+        if op == "tool_update":
+            return tools.request_update()
+        # the checks take up to a minute: answer now, send the report when it's done (with the telemetry)
+        def checks():
+            out = tools.run_doctor(getattr(self, "main_path", None), self.cam_id)
+            try:
+                self.mq.publish(self.topics["telemetry"], json.dumps(dict(self._info(), tool={
+                    "req": str(req)[:64], "op": "tool_doctor", "output": out})), qos=1)
+            except Exception as e:  # noqa: BLE001
+                self.log.warning("couldn't send the checks' report: %s", e)
+        threading.Thread(target=checks, daemon=True, name=f"doctor-{self.cam_id}").start()
+        return {"started": True}
+
     def _handle(self, cmd):
         op = cmd.get("op")
         if op == "info":
             return self._info()
+        if op in self.TOOL_OPS:
+            return self._tool(op, cmd.get("req"))
         if op in CONTROL_OPS:
             return self._control(op, cmd)
         if op == "versions":                    # the website wants lower-quality versions made here (or not)
@@ -302,14 +332,15 @@ class CameraAgent:
             "ptz": {"enabled": bool(self.ptz),
                     "available": bool(self.ptz and self.ptz.available),
                     "connected": bool(self.ptz and self.ptz.connected),
-                    "position": self.ptz_position},
+                    "position": self.ptz_position,
+                    **_dict(self.ptz.health() if self.ptz else {})},
             "caps": dict(self.controls.caps, position=self.position_kind) if self.controls and self.controls.caps
                     else None,
             **({"events": list(self.events_pending)} if self.events_pending else {}),
             "uplink": dict(self.uplink.stats, fps_configured=self.cfg["camera"].get("fps_configured") or None)
                       if self.uplink else None,
             "versions": self.versions.capability() if self.versions else {"ok": False},
-            **({"notices": n} if (n := prereqs.notices()) else {}),     # shown on the camera's Health tab
+            **({"notices": n} if (n := prereqs.notices() + getattr(self, "_camera_notices", list)()) else {}),
             **({"weather": {"station": {"kind": self.weather.kind, "uid": self.weather.uid, "name": self.weather_name},
                             "readings": list(self.weather_pending)}}
                if self.weather and self.weather_pending and self.weather.uid else {}),
@@ -317,6 +348,15 @@ class CameraAgent:
 
     POSITION_BUSY_S = 2      # how often to ask the camera where it points while it's steered from YonderView
     POSITION_IDLE_S = 5      # ...and otherwise (it may be moved from its own app or web page, which we don't see)
+
+    def _camera_notices(self):
+        """This camera's own problems for the Health tab: PTZ not answering, the camera moved address."""
+        out = []
+        if self.ptz:
+            out.append(self.ptz.problem())
+        if getattr(self, "follower", None):
+            out.append(self.follower.notice)
+        return [x for x in out if x]
 
     def track_position(self, stop):
         """Report where the PTZ camera points: every 2 s while it's being moved (and for 20 s after), every
@@ -451,6 +491,9 @@ class CameraAgent:
             self.ptz.start()
             threading.Thread(target=self.track_position, args=(self.stopping,), daemon=True,
                              name=f"ptzpos-{self.cam_id}").start()
+        if self.follower:
+            threading.Thread(target=self.follower.run, args=(self.stopping,), daemon=True,
+                             name=f"follow-{self.cam_id}").start()
         p = self.cfg["platform"]
         if self.mqtt_refused:
             self.log.error("MQTT: %s. Video still goes out; camera controls and status don't.", self.mqtt_refused)
@@ -492,6 +535,7 @@ class Supervisor:
             cid = cfg["platform"].get("camera_id", "?")
             try:
                 self.agents.append(CameraAgent(cfg))
+                self.agents[-1].main_path = main_path              # for the remote checks (camagent doctor)
             except ValueError as e:
                 log.error("camera '%s' not started: %s (fix with: camagent configure %s)", cid, e, cid)
         if not self.agents:

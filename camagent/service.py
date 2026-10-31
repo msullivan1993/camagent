@@ -322,6 +322,7 @@ def refresh_unit(config_path=None):
             protect_files(config_path)          # 0.17.7: passwords in older files encrypted (Windows)
         except Exception:  # noqa: BLE001 - never stop an update over this; the next save encrypts them anyway
             pass
+        _ensure_update_now(config_path)
         exe, xml = _win_paths()
         xml.write_text(_win_xml(Path(config_path or default_config_path())), encoding="utf-8")
         _win_apply_account(config_path)
@@ -330,6 +331,7 @@ def refresh_unit(config_path=None):
         return
     UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
     _run(["systemctl", "daemon-reload"], check=False)
+    _ensure_update_now(config_path)
     # Updates from 0.15 run this (the new code) but not the new updater: move the sign-in to its root-only file here
     try:
         from .config import migrate_account
@@ -352,8 +354,11 @@ def restart():
 
 # ---------- nightly update schedule ----------
 TASK_NAME = "camagent update"
+NOW_TASK_NAME = "camagent update now"     # 0.17.8: "Update now" from the website (checks a flag every 5 minutes)
 TIMER_PATH = Path("/etc/systemd/system/camagent-update.timer")
 TIMER_SERVICE_PATH = Path("/etc/systemd/system/camagent-update.service")
+NOW_PATH_UNIT = Path("/etc/systemd/system/camagent-update-now.path")
+NOW_SERVICE_PATH = Path("/etc/systemd/system/camagent-update-now.service")
 
 
 def update_schedule_installed() -> bool:
@@ -371,6 +376,7 @@ def install_update_schedule(config_path=None):
         cmd = f'"{sys.executable}" -m camagent update --auto --jitter 3600 --config "{config_path}"'
         _run(["schtasks", "/Create", "/TN", TASK_NAME, "/TR", cmd, "/SC", "DAILY", "/ST", "03:00",
               "/RU", "SYSTEM", "/RL", "HIGHEST", "/F"])
+        _install_update_now(config_path)
     else:
         TIMER_SERVICE_PATH.write_text(f"""[Unit]
 Description=camagent nightly update check
@@ -392,16 +398,66 @@ WantedBy=timers.target
 """, encoding="utf-8")
         _run(["systemctl", "daemon-reload"])
         _run(["systemctl", "enable", "--now", "camagent-update.timer"])
+        _install_update_now(config_path)
     print("Automatic updates: on (CamAgent checks for a new version each night, around 3 AM).")
+
+
+def _install_update_now(config_path):
+    """"Update now" from the camera's Health tab: the service (which can't install anything) leaves a flag in its
+    state folder; this, running as SYSTEM / root, sees it and runs the update check at once."""
+    from .config import state_dir
+    from .tools import UPDATE_FLAG
+    if os.name == "nt":
+        cmd = f'"{sys.executable}" -I -m camagent update --if-requested --config "{config_path}"'
+        _run(["schtasks", "/Create", "/TN", NOW_TASK_NAME, "/TR", cmd, "/SC", "MINUTE", "/MO", "5",
+              "/RU", "SYSTEM", "/RL", "HIGHEST", "/F"], check=False)
+        return
+    NOW_SERVICE_PATH.write_text(f"""[Unit]
+Description=camagent update asked for from yonderview.net
+
+[Service]
+Type=oneshot
+ExecStart={sys.executable} -I -m camagent update --if-requested --config {config_path}
+""", encoding="utf-8")
+    NOW_PATH_UNIT.write_text(f"""[Unit]
+Description=camagent: watch for "update now" from yonderview.net
+
+[Path]
+PathExists={state_dir() / UPDATE_FLAG}
+
+[Install]
+WantedBy=multi-user.target
+""", encoding="utf-8")
+    _run(["systemctl", "daemon-reload"], check=False)
+    _run(["systemctl", "enable", "--now", "camagent-update-now.path"], check=False)
+
+
+def _ensure_update_now(config_path=None):
+    """After an update from before 0.17.8: add the "update now" job where automatic updates are on."""
+    try:
+        if update_schedule_installed() and not update_now_installed():
+            _install_update_now(Path(config_path or default_config_path()))
+    except Exception:  # noqa: BLE001 - never stop an update over this
+        pass
+
+
+def update_now_installed() -> bool:
+    if os.name == "nt":
+        return subprocess.run(["schtasks", "/Query", "/TN", NOW_TASK_NAME], capture_output=True).returncode == 0
+    return NOW_PATH_UNIT.exists()
 
 
 def remove_update_schedule():
     _require_admin()
     if os.name == "nt":
         _run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], check=False)
+        _run(["schtasks", "/Delete", "/TN", NOW_TASK_NAME, "/F"], check=False)
     else:
         _run(["systemctl", "disable", "--now", "camagent-update.timer"], check=False)
+        _run(["systemctl", "disable", "--now", "camagent-update-now.path"], check=False)
         TIMER_PATH.unlink(missing_ok=True)
         TIMER_SERVICE_PATH.unlink(missing_ok=True)
+        NOW_PATH_UNIT.unlink(missing_ok=True)
+        NOW_SERVICE_PATH.unlink(missing_ok=True)
         _run(["systemctl", "daemon-reload"], check=False)
     print("Automatic updates: off.")

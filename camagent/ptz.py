@@ -19,6 +19,10 @@ class PTZ:
         self.settings = {"invert_pan": False, "invert_tilt": False}
         self.connected = False
         self.available = True          # becomes False if the camera has no PTZ profile
+        # health, for the camera's Health tab (0.17.8): does the camera answer its PTZ position requests?
+        self.lost_since = time.monotonic()   # when it went (or since start: never got) connected; None = connected
+        self.status_fails = 0          # position requests failing in a row
+        self.status_ms = None          # how long the last position answer took
         self.ptz = None
         self.token = None
         self._lock = threading.RLock()
@@ -76,8 +80,17 @@ class PTZ:
             self.reports_position = None if sp is None else bool(sp)
         except Exception:  # noqa: BLE001
             self.reports_position = None
+        # does it answer a position request right away? (the camera's PTZ itself, not just its ONVIF login)
+        t0 = time.monotonic()
+        try:
+            ptz.GetStatus({"ProfileToken": chosen.token})
+            self.status_ms, self.status_fails = round((time.monotonic() - t0) * 1000), 0
+        except Exception as e:  # noqa: BLE001 - some cameras refuse GetStatus but still move: note, don't fail
+            self.status_fails += 1
+            self.log.warning("connected, but the camera didn't answer a PTZ position request: %s", friendly_error(e))
         with self._lock:
             self.ptz, self.token, self.connected = ptz, chosen.token, True
+            self.lost_since = None
             self.onvif = cam                                      # for imaging (focus, day/night) and device calls
             self.source = getattr(vsc, "SourceToken", None) if vsc else None
         self.log.info("PTZ ready on profile %s (%s)", getattr(chosen, "Name", ""), chosen.token)
@@ -92,6 +105,7 @@ class PTZ:
         self.log.warning("PTZ call failed (%s); reconnecting", err)
         with self._lock:
             self.connected = False
+            self.lost_since = self.lost_since or time.monotonic()
         self.start()
 
     def _require(self):
@@ -205,9 +219,12 @@ class PTZ:
         None when it can't say (not connected, or the camera doesn't report position)."""
         if not (self.available and self.connected):
             return None
+        t0 = time.monotonic()
         try:
             st = self.ptz.GetStatus({"ProfileToken": self.token})
+            self.status_ms, self.status_fails = round((time.monotonic() - t0) * 1000), 0
         except Exception as e:  # noqa: BLE001
+            self.status_fails += 1
             self.log.debug("PTZ position unavailable: %s", e)
             return None
         pos = getattr(st, "Position", None)
@@ -218,6 +235,28 @@ class PTZ:
         return {"pan": round(float(pt.x), 4), "tilt": round(float(pt.y or 0), 4),
                 "zoom": round(float(zoom), 4) if zoom is not None else None,
                 "space": getattr(pt, "space", "") or ""}
+
+    LOST_NOTICE_S = 120           # not connected this long: tell the host
+    FAILS_NOTICE = 6              # position requests failing in a row (about 30 s): tell the host
+
+    def problem(self):
+        """A plain-words note for the camera's Health tab when its PTZ isn't responding, else ""."""
+        if not self.available:
+            return ""
+        if not self.connected:
+            since = self.lost_since
+            if since is not None and time.monotonic() - since > self.LOST_NOTICE_S:
+                mins = int((time.monotonic() - since) // 60)
+                return (f"the camera's turn-and-zoom controls (PTZ) haven't been reachable for {mins} min: check the "
+                        "camera is on and its ONVIF login works (camagent doctor)")
+            return ""
+        if self.status_fails >= self.FAILS_NOTICE and getattr(self, "reports_position", None) is not False:
+            return ("the camera's PTZ isn't answering position requests (its controls may still work): restarting "
+                    "the camera usually fixes this")
+        return ""
+
+    def health(self):
+        return {"connected": bool(self.connected), "status_ms": self.status_ms, "status_fails": self.status_fails}
 
     def shutdown(self):
         self._stop.set()

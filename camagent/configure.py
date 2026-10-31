@@ -431,6 +431,7 @@ def step_convert(cfg, ffmpeg):
         return
     print("\nChecking what this computer can use to convert video (up to a minute)...")
     results = convert.detect(ffmpeg, show=print)
+    cfg["_detected"] = results                    # step_versions reuses it
     method = convert.best(results)
     m = cfg.get("_measure") or {}
     width = int(m.get("width") or (height * 16 // 9 if height else 3840))
@@ -462,6 +463,36 @@ def step_convert(cfg, ffmpeg):
             return
     s.update(convert="1080p", encoder=method, source_height=height)
     print(f"  Saved: converting to 1080p with {convert.LABELS[method]}.")
+
+
+def step_versions(cfg, ffmpeg):
+    """The 720p and 480p: made on this computer (YonderView's preferred way: the server stays free for everyone) when
+    its graphics can, else by YonderView's server. Says which, plainly; nothing to choose unless there's no GPU."""
+    from . import convert
+    from .versions import GPU_METHODS
+    s = cfg["stream"]
+    if s.get("versions") == "off" or not ffmpeg:
+        return
+    heading("The lower qualities (720p and 480p)")
+    print("Viewers on phones and slow connections watch a 720p or 480p copy. YonderView prefers these to be made")
+    print("on this computer (about 3 Mbps more upload); otherwise YonderView's server makes them.")
+    results = cfg.get("_detected")
+    if results is None:
+        print("Checking this computer's graphics (up to a minute)...")
+        results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
+                                 size="1920x1080", timeout=20)
+    gpu = next((m for m, speed in results if speed and m in GPU_METHODS), None)
+    if gpu:
+        s["versions"] = "auto"
+        print(f"  This computer makes them itself, with {convert.LABELS.get(gpu, gpu)}. Nothing to do.")
+        return
+    print("  This computer has no graphics chip CamAgent can use, so YonderView's server makes them for now.")
+    print("  (A mini PC with an Intel graphics chip makes them easily.)")
+    if yes("Make them with this computer's processor instead? Only for a strong processor", default=False):
+        s["versions"] = "cpu"
+        print("  Saved: made on this computer's processor. If it can't keep up, the server takes over by itself.")
+    else:
+        s["versions"] = "auto"
 
 
 def step_platform(cfg, main_path=None):
@@ -591,6 +622,7 @@ def _walk(cam, ffmpeg, ffprobe, main_path=None):
             done = True
             break
     step_convert(cam, ffmpeg)
+    step_versions(cam, ffmpeg)
     step_platform(cam, main_path)
     if ffmpeg:
         cam["stream"]["ffmpeg"] = ffmpeg           # full path, so the service finds it too

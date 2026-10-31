@@ -106,8 +106,17 @@ def _refresh_unit(config_path=None):
         service.refresh_unit(config_path)          # the new version couldn't start: keep the old unit current
 
 
-def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False):
+def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False, if_requested=False):
     from .release import NotSigned
+    if if_requested:
+        # "Update now" from the camera's Health tab (0.17.8): the service left a flag; this job runs as administrator
+        # every few minutes and normally finds nothing to do
+        from . import tools
+        if not tools.update_requested():
+            return
+        tools.clear_update_request()
+        _log("update asked for from the camera's Health tab on yonderview.net")
+        auto, jitter = True, 0
     service._require_admin()
     cfg = config.load_or_defaults(config_path)
     repo = cfg["update"]["repo"]
@@ -144,8 +153,8 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False):
             service.install_update_schedule(config_path)
         return
 
-    # ----- nightly scheduled run -----
-    if not cfg["update"].get("auto", True):
+    # ----- nightly scheduled run (or asked for from the website: then even with automatic updates off) -----
+    if not cfg["update"].get("auto", True) and not if_requested:
         return _log("automatic updates are off; nothing to do")
     if jitter:
         time.sleep(random.uniform(0, jitter))        # spread agents out so they don't all check at once
