@@ -131,6 +131,7 @@ def lock_windows_file(path):
 
 def load(path=None) -> dict:
     path = Path(path or default_config_path())
+    from . import secret
     with path.open("rb") as f:
         cfg = _merge(DEFAULTS, tomllib.load(f))
     try:
@@ -138,7 +139,7 @@ def load(path=None) -> dict:
             cfg["account"] = dict(DEFAULTS["account"], **(tomllib.load(f).get("account") or {}))
     except (FileNotFoundError, PermissionError):
         pass                                      # not signed in, or the service (it doesn't need it)
-    return cfg
+    return secret.apply(cfg, secret.unprotect)
 
 
 def load_or_defaults(path=None) -> dict:
@@ -157,6 +158,8 @@ def _toml_value(v):
 
 
 def dumps(cfg: dict, sections=None, title="camagent configuration") -> str:
+    from . import secret
+    cfg = secret.apply(copy.deepcopy({k: v for k, v in cfg.items() if not k.startswith("_")}), secret.protect)
     lines = [f"# {title}", "# Edit with: camagent configure", ""]
     for section in (sections or DEFAULTS):
         if SECTION_COMMENTS.get(section):
@@ -286,6 +289,7 @@ def load_all(main_path=None):
     """Returns (main, cameras, problems). Each camera is a full config dict with "_source" (its file)
     and "_legacy" (True if it still lives in camagent.toml). A broken camera file is reported in
     problems and skipped, so the other cameras still run."""
+    from . import secret
     main_path = Path(main_path or default_config_path())
     main = load_or_defaults(main_path)
     cams, problems, seen = [], [], set()
@@ -293,7 +297,7 @@ def load_all(main_path=None):
     for f in sorted(d.glob("*.toml")) if d.is_dir() else []:
         try:
             with f.open("rb") as fh:
-                cam = _combine(main, _merge(DEFAULTS, tomllib.load(fh)))
+                cam = _combine(main, secret.apply(_merge(DEFAULTS, tomllib.load(fh)), secret.unprotect))
         except Exception as e:  # noqa: BLE001
             problems.append(f"{f.name}: {e}")
             continue
@@ -332,6 +336,30 @@ def save_camera(cam: dict, main_path=None) -> Path:
         Path(old).unlink(missing_ok=True)             # the camera ID changed: drop the old file
     cam["_source"], cam["_legacy"] = path, False
     return path
+
+
+def protect_files(main_path=None):
+    """Windows: encrypt the passwords in settings files written before 0.17.7 (run after an update or install).
+    Rewrites only files that still hold one in plain text."""
+    from . import secret
+    if not secret.on_windows():
+        return 0
+    main_path = Path(main_path or default_config_path())
+    n = 0
+    _, cams, _ = load_all(main_path)
+    for cam in cams:
+        src = cam.get("_source")
+        try:
+            with open(src, "rb") as fh:
+                raw = tomllib.load(fh)
+        except (OSError, TypeError, ValueError):
+            continue
+        plain = any(isinstance(raw.get(sec, {}).get(key), str) and raw[sec][key]
+                    and not raw[sec][key].startswith(secret.PREFIX) for sec, key in secret.FIELDS)
+        if plain:
+            save_camera(cam, main_path)
+            n += 1
+    return n
 
 
 def save_main(main: dict, main_path=None) -> Path:

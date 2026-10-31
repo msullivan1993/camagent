@@ -27,7 +27,8 @@ from .config import redact, rtsp_with_auth, scrub, srt_url, state_dir
 # ffmpeg lines that aren't problems (it corrects the timestamps itself); kept out of the error shown on the website
 FAILED_CHECK_S = 6 * 3600     # how long a failed versions check is believed
 
-HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time")
+HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time",
+            "does not support H.264 B-frame")      # AMD's encoder saying it won't use B-frames (we don't want any)
 
 GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "amf-lite", "v4l2m2m",
                "v4l2m2m-lite", "rkmpp")

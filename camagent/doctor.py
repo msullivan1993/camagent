@@ -239,6 +239,11 @@ def _check_camera(r, cfg, ffprobe):
         try:
             info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
             r.line(OK, "Camera connection", f"{info['manufacturer']} {info['model']} at {cam['host']}")
+            if info.get("login_level") == "Administrator":
+                r.line(WARN, "Camera login", f"\"{cam['username']}\" is an administrator on the camera",
+                       "safer: make a login on the camera just for CamAgent, with Operator (or User) rights; "
+                       "Operator is enough for turning, zoom and presets. Then change the camera's login here: "
+                       + CHANGE)
             if not any(p["ptz"] for p in info["profiles"]):
                 r.line(WARN, "Camera controls", "remote turn and zoom (PTZ) is on, but this camera doesn't offer it",
                        f"if the camera doesn't turn or zoom, answer No to PTZ in: {CHANGE}")

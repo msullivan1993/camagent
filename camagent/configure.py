@@ -108,6 +108,8 @@ def step_find_camera(cfg):
     cam["host"] = ask("Camera's IP address (four numbers with dots, like 192.168.1.64)", cam["host"])
     cam["onvif_port"] = ask_int("Camera's ONVIF port (not sure? press Enter; Reolink cameras use 8000)", cam["onvif_port"])
     print("  Next, the camera's own login: the one for its app or web page (not your YonderView login).")
+    print("  Safer: a login made on the camera just for CamAgent, with Operator rights (enough for turning, zoom and")
+    print("  presets), rather than the camera's admin login. The admin login works too.")
     cam["username"] = ask("Camera username", cam["username"])
     cam["password"] = ask_secret("Camera password", cam["password"])
 
@@ -137,6 +139,9 @@ def step_pick_stream(cfg, ffprobe):
     print("Asking the camera what video it can send (this can take up to a minute)...")
     try:
         info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
+        if info.get("login_level") == "Administrator":
+            print("  (That's an administrator login on the camera. It works; a separate Operator login for CamAgent "
+                  "would be safer, and you can switch to one later.)")
     except Exception as e:
         info = None
         msg = camera.friendly_error(e)

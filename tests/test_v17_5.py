@@ -78,3 +78,37 @@ ladder = [{"suffix": s, "height": h} for s, h in (("1080", 1080), ("720", 720), 
 assert [v["suffix"] for v in versions.pick(ladder, 1440)] == ["1080", "720", "480"]
 assert [v["suffix"] for v in versions.pick(ladder, 1080)] == ["720", "480"]
 print("v0.17.6 OK")
+
+# 0.17.7: passwords encrypted in the files on Windows (DPAPI, faked here), read back on load; plain text still works
+import tempfile  # noqa: E402
+
+from camagent import config, secret  # noqa: E402
+
+fake = {"CryptProtectData": lambda d: b"X" + d[::-1], "CryptUnprotectData": lambda d: d[1:][::-1]}
+with tempfile.TemporaryDirectory() as d, mock.patch.object(secret, "on_windows", return_value=True), \
+        mock.patch.object(secret, "_call", side_effect=lambda fn, data: fake[fn](data)), \
+        mock.patch.object(config, "_secure_dir"):
+    main = Path(d) / "camagent.toml"
+    (Path(d) / "cameras").mkdir()
+    cam = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
+    cam["camera"].update(host="h", username="viewer", password="cam-secret")
+    cam["platform"].update(camera_id="enc_1", srt_password="srt-secret", srt_passphrase="phrase-secret",
+                           mqtt_password="mq-secret")
+    path = config.save_camera(cam, main)
+    text = path.read_text(encoding="utf-8")
+    for plain in ("cam-secret", "srt-secret", "phrase-secret", "mq-secret"):
+        assert plain not in text, plain                                   # never in the file
+    assert text.count('"dpapi:') == 4 and 'username = "viewer"' in text   # other settings stay readable
+    _, cams, _ = config.load_all(main)
+    assert cams[0]["camera"]["password"] == "cam-secret" and cams[0]["platform"]["mqtt_password"] == "mq-secret"
+    path.write_text(text.replace(text.split('password = "')[1].split('"')[0], "typed-by-hand"), encoding="utf-8")
+    _, cams, _ = config.load_all(main)
+    assert cams[0]["camera"]["password"] == "typed-by-hand"               # plain text, typed by hand, works
+    assert config.protect_files(main) == 1 and "typed-by-hand" not in path.read_text(encoding="utf-8")
+assert secret.unprotect("dpapi:not-base64!") == ""                        # from another PC: empty, enter it again
+assert secret.protect("x") == "x"                                         # Linux: unchanged
+assert camera.login_level(NS(devicemgmt=NS(GetUsers=lambda: [NS(Username="Admin", UserLevel="Administrator")])),
+                          "admin") == "Administrator"
+assert camera.login_level(NS(devicemgmt=NS(GetUsers=lambda: (_ for _ in ()).throw(RuntimeError("not allowed")))),
+                          "viewer") == "limited?"
+print("v0.17.7 OK")

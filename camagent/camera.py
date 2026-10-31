@@ -154,6 +154,18 @@ def normalize_uri(raw: str, host: str) -> str:
     return urlunparse(("rtsp", f"{host}:{port}", u.path, u.params, u.query, u.fragment))
 
 
+def login_level(cam, user):
+    """The camera login's level, as ONVIF names it ("Administrator", "Operator", "User"), or "" if the camera won't
+    say. Listing a camera's users usually needs an administrator, so a refusal itself suggests a limited login."""
+    try:
+        for u in cam.devicemgmt.GetUsers() or []:
+            if str(getattr(u, "Username", "")).lower() == str(user).lower():
+                return str(getattr(u, "UserLevel", "") or "")
+    except Exception:  # noqa: BLE001
+        return "limited?"
+    return ""
+
+
 def onvif_inspect(host, port, user, password) -> dict:
     """Return device info and a list of stream profiles (with RTSP URLs and PTZ flag)."""
     cam = onvif_connect(host, port, user, password)
@@ -183,6 +195,7 @@ def onvif_inspect(host, port, user, password) -> dict:
             "ptz": bool(getattr(p, "PTZConfiguration", None)),
         })
     return {
+        "login_level": login_level(cam, user),
         "manufacturer": getattr(info, "Manufacturer", ""),
         "model": getattr(info, "Model", ""),
         "firmware": getattr(info, "FirmwareVersion", ""),

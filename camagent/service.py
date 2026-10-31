@@ -317,6 +317,11 @@ def refresh_unit(config_path=None):
             migrate_account(config_path)        # the sign-in out of camagent.toml, before the service can read it
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from .config import protect_files
+            protect_files(config_path)          # 0.17.7: passwords in older files encrypted (Windows)
+        except Exception:  # noqa: BLE001 - never stop an update over this; the next save encrypts them anyway
+            pass
         exe, xml = _win_paths()
         xml.write_text(_win_xml(Path(config_path or default_config_path())), encoding="utf-8")
         _win_apply_account(config_path)
