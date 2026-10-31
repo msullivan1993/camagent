@@ -28,8 +28,11 @@ function Winget-Install($id, $extra = "") {
         throw "winget (Windows' app installer) isn't available. Update 'App Installer' from the Microsoft Store, or install '$id' yourself, then run this again."
     }
     # for all users (Program Files): the service runs these, so a normal user mustn't be able to change them
-    if ($extra) { winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent $extra }
-    else { winget install -e --id $id --scope machine --accept-package-agreements --accept-source-agreements --silent }
+    # --source winget: only winget's own catalog. With the Microsoft Store source too, a package listed in both (Python)
+    # makes winget ask which one instead of installing, and the Store source fails outright on some new PCs
+    # (certificate error 0x8a15005e, 2026-10-31)
+    if ($extra) { winget install -e --id $id --scope machine --source winget --accept-package-agreements --accept-source-agreements --silent $extra }
+    else { winget install -e --id $id --scope machine --source winget --accept-package-agreements --accept-source-agreements --silent }
     if ($LASTEXITCODE -ne 0) { Write-Host "    (winget returned code $LASTEXITCODE for $id; it may already be installed, possibly for one user only)" }
     Refresh-Path
 }
