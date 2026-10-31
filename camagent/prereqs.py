@@ -69,9 +69,9 @@ def unsafe_python() -> str:
     exe = base_python()
     if admin_only_location(exe):
         return ""
-    return (f"CamAgent runs on a Python installed for one user only ({exe}), which that user could change. It "
-            "keeps running with full system rights (LocalSystem) until that's fixed: run CamAgent's installer "
-            "again (it installs Python for all users and moves CamAgent onto it; cameras and settings stay)")
+    return (f"CamAgent runs on a Python installed for one user only ({exe}), which a program run by that user could "
+            "change. To fix it, run CamAgent's installer again (it installs Python for all users and moves CamAgent "
+            "onto it; cameras and settings stay)")
 
 
 def notices() -> list:
@@ -102,9 +102,10 @@ def _windows_ffmpeg_candidates():
 
 
 def find_ffmpeg(configured=""):
-    """The ffmpeg to run. On Windows only one in an administrators-only folder: the configured or PATH one is
-    skipped when it sits where a normal user could replace it, and "" is returned if there's no other (the reason:
-    unsafe_ffmpeg())."""
+    """The ffmpeg to run. On Windows one in an administrators-only folder if there is one; otherwise (e.g. the common
+    C:\\ffmpeg, or one installed for one user) that one anyway, with a warning for the host (unsafe_ffmpeg(): doctor,
+    the camera's Health tab). Mike, 2026-10-30: securing the PC is the host's job; refusing kept cameras off the air.
+    Never one the service's account can't even look at (another user's folder)."""
     picks = []
     if configured and is_file(configured):
         picks.append(configured)
@@ -118,16 +119,29 @@ def find_ffmpeg(configured=""):
             _refused.clear()
             return p
     if picks:
-        # Only ones a normal user could replace (0.17: refused, before it ran anyway with a warning): whatever they
-        # put there would run as the service. No video until ffmpeg is installed for all users.
-        _refused["reason"] = (f"not using ffmpeg at {picks[0]}: it's in a folder any user of this computer can "
-                              "change, so it isn't safe to run. Install ffmpeg for all users: in an administrator "
-                              "window type winget install -e --id Gyan.FFmpeg --scope machine, then restart CamAgent")
+        _refused["reason"] = (f"ffmpeg at {picks[0]} is in a folder any user of this computer can change. CamAgent "
+                              "uses it, but a program run by any user here could swap it for something else. To fix "
+                              "it, in an administrator window type winget install -e --id Gyan.FFmpeg --scope machine "
+                              "--force, then restart CamAgent")
         if picks[0] not in _warned_unsafe:
             _warned_unsafe.add(picks[0])
             print("WARNING: " + _refused["reason"] + ".", flush=True)
-        return ""
+        return picks[0]
     _refused.clear()
+    return ""
+
+
+def ffmpeg_in_a_profile(configured="") -> str:
+    """Windows: the ffmpeg CamAgent would use sits in a user's own folder (C:\\Users\\...), where the service's
+    limited account can't read it: the service then stays LocalSystem (or it couldn't send video)."""
+    if not WINDOWS:
+        return ""
+    ff = find_ffmpeg(configured)
+    users = os.path.join(os.environ.get("SystemDrive", "C:") + os.sep, "Users")
+    if ff and os.path.normcase(os.path.abspath(ff)).startswith(os.path.normcase(users) + os.sep):
+        return (f"ffmpeg is installed for one user only ({ff}); CamAgent's own limited account can't use it, so "
+                "CamAgent keeps full system rights for now. To fix it, in an administrator window type winget "
+                "install -e --id Gyan.FFmpeg --scope machine --force, then restart CamAgent")
     return ""
 
 

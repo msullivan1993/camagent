@@ -87,6 +87,10 @@ def run(config_path=None, camera_id=None):
             first = ffmpeg
         r.line(OK, "ffmpeg (video tool)", first)
         from . import prereqs
+        if prereqs.unsafe_ffmpeg():          # Windows: in a folder any user can change (used anyway, 0.17.3)
+            r.line(WARN, "ffmpeg location", prereqs.unsafe_ffmpeg().split(". To fix it")[0],
+                   "in an administrator window type: winget install -e --id Gyan.FFmpeg --scope machine --force. "
+                   "Then restart CamAgent")
         if not prereqs.admin_only_location(sys.base_prefix):
             r.line(FAIL, "Python location", f"CamAgent's Python ({sys.base_prefix}) is in a folder any user of this "
                    "computer can change (a security risk)",
@@ -98,12 +102,7 @@ def run(config_path=None, camera_id=None):
                    "Linux: sudo apt install ffmpeg)")
     else:
         from . import prereqs
-        if prereqs.unsafe_ffmpeg():          # Windows: only a copy a normal user could replace (0.17: not used)
-            r.line(FAIL, "ffmpeg location", prereqs.unsafe_ffmpeg().replace("not using", "not sending video with", 1),
-                   "install it for all users. In an administrator window type: winget install -e --id Gyan.FFmpeg "
-                   "--scope machine. Then restart CamAgent")
-        else:
-            r.line(FAIL, "ffmpeg (video tool)", "not found; CamAgent needs it to send video", camera.ffmpeg_install_hint())
+        r.line(FAIL, "ffmpeg (video tool)", "not found; CamAgent needs it to send video", camera.ffmpeg_install_hint())
     ffprobe = camera.find_ffprobe(ffmpeg)
     _check_privacy(r)
     if os.name == "nt":
@@ -183,14 +182,9 @@ def _check_windows_account(r):
     m = next((line.split(":", 1)[1].strip() for line in out.splitlines() if "SERVICE_START_NAME" in line), "")
     if not m:
         return
-    from .prereqs import unsafe_python
-    blocker = unsafe_python()
-    if m.lower() == "localsystem" and blocker:
-        r.line(WARN, "Service account", "CamAgent runs with full system rights (LocalSystem)", blocker)
-    elif m.lower() == "localsystem":
-        r.line(WARN, "Service account", "CamAgent runs with full system rights (LocalSystem)",
-               "open CamAgent and choose Start CamAgent again (it then runs as its own limited account); if "
-               "[agent] windows_account = \"system\" is set in camagent.toml on purpose, ignore this")
+    if m.lower() == "localsystem":
+        r.line(OK, "Service account", "LocalSystem (the default; [agent] windows_account = \"virtual\" in "
+               "camagent.toml runs it as its own limited account)")
     else:
         r.line(OK, "Service account", m)
 

@@ -16,9 +16,9 @@ WINSW_SHA256 = "05b82d46ad331cc16bdc00de5c6332c1ef818df8ceefcd49c726553209b3a0da
 # Windows (0.17): the service runs as its own limited account, not SYSTEM, so if a bad camera stream ever broke
 # ffmpeg it couldn't take over the computer. [agent] windows_account in camagent.toml picks it:
 WINDOWS_ACCOUNTS = {
-    "virtual": "NT SERVICE\\camagent",          # a "virtual account" just for this service (default)
-    "localservice": "NT AUTHORITY\\LocalService",   # if that doesn't work on this PC (shared with other services)
-    "system": "LocalSystem",                      # as before 0.17: only if neither works (full system rights)
+    "virtual": "NT SERVICE\\camagent",          # a "virtual account" just for this service (opt-in, 0.17.3)
+    "localservice": "NT AUTHORITY\\LocalService",   # shared with other services (opt-in)
+    "system": "LocalSystem",                      # the default: as before 0.17 (full system rights)
 }
 LOCAL_SERVICE_SID = "S-1-5-19"
 
@@ -151,11 +151,11 @@ def windows_account(config_path=None):
     """(account name for sc.exe, its SID or None for SYSTEM, the setting's name)."""
     from .config import load_or_defaults
     try:
-        mode = str(load_or_defaults(config_path)["agent"].get("windows_account") or "virtual").strip().lower()
-    except Exception:  # noqa: BLE001 - a broken settings file: keep the safe default
-        mode = "virtual"
+        mode = str(load_or_defaults(config_path)["agent"].get("windows_account") or "system").strip().lower()
+    except Exception:  # noqa: BLE001 - a broken settings file: as before 0.17
+        mode = "system"
     if mode not in WINDOWS_ACCOUNTS:
-        mode = "virtual"
+        mode = "system"
     sid = {"virtual": service_sid(), "localservice": LOCAL_SERVICE_SID}.get(mode)
     return WINDOWS_ACCOUNTS[mode], sid, mode
 
@@ -186,14 +186,24 @@ def _win_grant_access(sid):
         lock_windows_file(acct)
 
 
+def _configured_ffmpeg(config_path=None):
+    """The ffmpeg the cameras' settings name, if any (they all share one)."""
+    try:
+        from .config import load_all
+        cams = load_all(config_path)
+        return (cams[0]["stream"].get("ffmpeg", "") if cams else "") or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _win_apply_account(config_path=None):
     """Run the service as its own account (see WINDOWS_ACCOUNTS). Takes effect at its next start. A limited account
     only when everything the service runs is in an all-users folder: otherwise (e.g. CamAgent made long ago on a
     one-user Python) it couldn't even start (0.17.0 on such a PC: "No Python at ..." every few seconds), so it stays
     LocalSystem and says why (doctor, the camera's Health tab)."""
-    from .prereqs import unsafe_python
+    from .prereqs import ffmpeg_in_a_profile, unsafe_python
     name, sid, mode = windows_account(config_path)
-    blocker = unsafe_python() if sid else ""
+    blocker = (unsafe_python() or ffmpeg_in_a_profile(_configured_ffmpeg(config_path))) if sid else ""
     if blocker:
         print(f"  CamAgent stays on LocalSystem for now: {blocker}.")
         name, sid = WINDOWS_ACCOUNTS["system"], None
@@ -205,7 +215,7 @@ def _win_apply_account(config_path=None):
     if r.returncode:
         print(f"  (couldn't set the account CamAgent runs as to {name}: {(r.stdout + r.stderr).strip()[-200:]})")
         return False
-    if mode != "virtual":
+    if mode != "system":
         print(f"  CamAgent runs as {name} ([agent] windows_account = \"{mode}\" in camagent.toml).")
     return True
 

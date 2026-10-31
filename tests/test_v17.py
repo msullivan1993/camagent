@@ -190,13 +190,13 @@ assert service.service_sid("TrustedInstaller") == "S-1-5-80-956008885-3418522649
 assert service.service_sid().startswith("S-1-5-80-") and service.service_sid("CamAgent") == service.service_sid()
 with tempfile.TemporaryDirectory() as d:
     main = Path(d) / "camagent.toml"
-    assert service.windows_account(main)[0] == "NT SERVICE\\camagent"         # default (no settings yet)
+    assert service.windows_account(main)[0] == "LocalSystem"                 # default (0.17.3: as before 0.17)
     m = config.load_or_defaults(main); m["agent"]["windows_account"] = "localservice"; config.save_main(m, main)
     assert service.windows_account(main) == ("NT AUTHORITY\\LocalService", "S-1-5-19", "localservice")
     m["agent"]["windows_account"] = "system"; config.save_main(m, main)
     assert service.windows_account(main) == ("LocalSystem", None, "system")
     m["agent"]["windows_account"] = "nonsense"; config.save_main(m, main)
-    assert service.windows_account(main)[2] == "virtual"
+    assert service.windows_account(main)[2] == "system"
     calls = []
     with mock.patch.object(service.subprocess, "run", side_effect=lambda cmd, **k: calls.append(cmd) or
                            NS(returncode=0, stdout="", stderr="")), \
@@ -242,20 +242,15 @@ with tempfile.TemporaryDirectory() as d:
         service.install(Path(d) / "camagent.toml")
         assert dl.called                                            # replaced from the checked download
 
-# 6. Windows: an ffmpeg a normal user could replace is refused (no video), and the reason is shown
+# 6. Windows: an ffmpeg a normal user could replace (e.g. C:\ffmpeg) is used anyway, with a warning for the host
+#    (0.17.3, Mike: securing the PC is the host's job; refusing it kept cameras off the air)
 with mock.patch.object(prereqs, "WINDOWS", True), mock.patch.object(prereqs, "admin_only_location", return_value=False), \
-        mock.patch.object(prereqs, "which", return_value=r"C:\Users\x\ffmpeg.exe"), \
+        mock.patch.object(prereqs, "is_file", return_value=True), \
+        mock.patch.object(prereqs, "which", return_value=r"C:\ffmpeg\bin\ffmpeg.exe"), \
         mock.patch.object(prereqs, "_windows_ffmpeg_candidates", return_value=[]), quiet:
-    assert prereqs.find_ffmpeg("") == "" and "isn't safe" in prereqs.unsafe_ffmpeg()
-    from camagent.uplink import Uplink
-    c = {s: dict(config.DEFAULTS[s]) for s in config.DEFAULTS}
-    c["camera"].update(rtsp_url="rtsp://h/x")
-    c["platform"].update(camera_id="ff_1", ingest_host="i", srt_password="s", srt_passphrase="phrase0123")
-    try:
-        Uplink(c).command()
-        raise AssertionError("ran an unsafe ffmpeg")
-    except RuntimeError as e:
-        assert "isn't safe" in str(e)
+    assert prereqs.find_ffmpeg("") == r"C:\ffmpeg\bin\ffmpeg.exe"
+    assert "any user of this computer can change" in prereqs.unsafe_ffmpeg()
+    assert prereqs.unsafe_ffmpeg() in prereqs.notices()                 # on the camera's Health tab
 with mock.patch.object(prereqs, "WINDOWS", True), mock.patch.object(prereqs, "admin_only_location", return_value=True), \
         mock.patch.object(prereqs, "which", return_value=r"C:\Program Files\ffmpeg\bin\ffmpeg.exe"):
     assert prereqs.find_ffmpeg("").endswith("ffmpeg.exe") and prereqs.unsafe_ffmpeg() == ""
