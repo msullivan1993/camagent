@@ -111,6 +111,16 @@ def run(config_path=None, camera_id=None):
     for cfg in cams:
         _check_camera(r, cfg, ffprobe)
 
+    # --- clock ---
+    from . import link
+    offset = link.clock_offset()
+    if offset is None:
+        r.line(WARN, "Clock", "couldn't compare with YonderView's (no connection?)")
+    elif link.clock_problem(offset):
+        r.line(WARN, "Clock", link.clock_problem(offset).split(". Fix: ")[0], link.clock_problem(offset).split(". Fix: ")[1])
+    else:
+        r.line(OK, "Clock", f"right (within {abs(offset)} s of YonderView's)")
+
     # --- power ---
     from . import prereqs
     mins = prereqs.sleep_minutes()

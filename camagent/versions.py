@@ -66,6 +66,21 @@ def encoder(method):
     return [], ["-c:v", "libx264", "-preset", preset, "-tune", "zerolatency"], "format=yuv420p"
 
 
+def _font():
+    """The font for the mark's text. Windows' ffmpeg builds have no font configuration ("Fontconfig error: Cannot
+    load default config file", 0.17.4 on a new mini PC: the host-made versions never started), so name a font file
+    there; elsewhere fontconfig finds it by name."""
+    if os.name != "nt":
+        return "font='DejaVu Sans'"
+    fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
+    for name in ("arial.ttf", "segoeui.ttf", "tahoma.ttf", "verdana.ttf"):
+        path = os.path.join(fonts, name)
+        if os.path.isfile(path):
+            # ffmpeg's filter syntax: forward slashes, and the drive's colon escaped
+            return "fontfile='" + path.replace("\\", "/").replace(":", "\\:") + "'"
+    return "font='Arial'"
+
+
 def _mark_filters(f1, f2, every, chars):
     """The site's burned-in mark: two lines that jump to a new random-looking spot every `every` seconds
     (the same scheme as the server's, cameras/transcode.py)."""
@@ -80,8 +95,7 @@ def _mark_filters(f1, f2, every, chars):
     block_h = "H*0.0756" if (f1 and f2) else "H*0.0423"
     cx = f"({m}+{block_w}/2+(W-2*{m}-{block_w})*{rnd(1.7)})"
     y0 = f"({m}+(H-2*{m}-{block_h})*{rnd(4.3)})"
-    font = "Arial" if os.name == "nt" else "DejaVu Sans"
-    look = f"fontcolor=white@0.7:shadowcolor=black@0.6:shadowx=1:shadowy=1:font='{font}'"
+    look = f"fontcolor=white@0.7:shadowcolor=black@0.6:shadowx=1:shadowy=1:{_font()}"
     out = []
     if f1:
         out.append(f"drawtext=textfile='{f1}':fontsize=h/26:{look}:x='{cx}-tw/2':y='{y0}'")

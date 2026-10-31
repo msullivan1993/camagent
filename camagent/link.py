@@ -8,6 +8,7 @@ read. Signing out revokes it on the website too; unlinking the computer at yonde
 Website 1.118+: a computer may set up only the cameras the person allowed it (the others are listed but marked;
 connecting one answers with the address where they can allow it), and a token unused for 90 days stops working."""
 import json
+import os
 import socket
 import time
 import urllib.error
@@ -71,6 +72,40 @@ def _call(site, method, path, data=None, token=None, timeout=20):
         return status, json.loads(raw or b"{}")
     except ValueError:
         return status, {}
+
+
+def clock_offset(site=DEFAULT_SITE, timeout=8):
+    """How far this computer's clock is from YonderView's, in seconds (positive: this computer is behind), from
+    the Date header every answer carries (to the second). None if YonderView can't be reached. Absolute time
+    (UTC): the time zones of this computer, the camera and the host don't matter."""
+    import email.utils
+    try:
+        _check_site(site)
+        req = urllib.request.Request(site.rstrip("/") + "/", method="HEAD",
+                                     headers={"User-Agent": f"camagent/{__version__}"})
+        t0 = time.time()
+        try:
+            with _opener.open(req, timeout=timeout) as r:
+                date = r.headers.get("Date")
+        except urllib.error.HTTPError as e:                  # any answer carries the time (even a redirect)
+            date = e.headers.get("Date")
+        t1 = time.time()
+        server = email.utils.parsedate_to_datetime(date).timestamp() if date else None
+    except (LinkError, OSError, ValueError, TypeError):
+        return None
+    return None if server is None else round(server - (t0 + t1) / 2)
+
+
+def clock_problem(offset):
+    """A plain-words warning when the clock is more than a minute off, else ""."""
+    if offset is None or abs(offset) < 60:
+        return ""
+    mins = abs(offset) // 60
+    how = f"{mins // 60} h {mins % 60} min" if mins >= 60 else f"{mins} min"
+    fix = ("Settings > Time & language > Date & time > Sync now (or, in an administrator window: w32tm /resync)"
+           if os.name == "nt" else "sudo timedatectl set-ntp true")
+    return (f"this computer's clock is {how} {'behind' if offset > 0 else 'ahead'}, which breaks camera logins "
+            f"and recording times. Fix: {fix}")
 
 
 def computer_name():

@@ -74,9 +74,24 @@ def unsafe_python() -> str:
             "onto it; cameras and settings stay)")
 
 
+_clock = {"at": 0.0, "problem": ""}
+CLOCK_CHECK_S = 3600
+
+
+def clock_notice() -> str:
+    """This computer's clock compared with YonderView's, at most hourly (the answer is remembered)."""
+    import time
+    now = time.monotonic()
+    if not _clock["at"] or now - _clock["at"] > CLOCK_CHECK_S:
+        from . import link
+        _clock["at"] = now
+        _clock["problem"] = link.clock_problem(link.clock_offset())
+    return _clock["problem"]
+
+
 def notices() -> list:
     """Problems the host should see on the camera's Health tab (telemetry), in plain words."""
-    return [n for n in (unsafe_python(), unsafe_ffmpeg()) if n]
+    return [n for n in (unsafe_python(), unsafe_ffmpeg(), clock_notice()) if n]
 
 
 _warned_unsafe = set()

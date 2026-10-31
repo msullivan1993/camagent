@@ -2,6 +2,7 @@
 import getpass
 import json
 import os
+import subprocess
 import time
 import threading
 from pathlib import Path
@@ -722,6 +723,22 @@ def run(config_path=None, camera_id=None):
     _finish(cam, main_path, others)
 
 
+def _check_clock():
+    """A computer clock far off (a new PC that hasn't synced yet) makes camera logins fail in confusing ways: say
+    so first, and on Windows offer to sync it."""
+    from . import link
+    problem = link.clock_problem(link.clock_offset())
+    if not problem:
+        return
+    print(f"\n  Note: {problem}.")
+    if os.name == "nt" and yes("Sync this computer's clock now?", default=True):
+        for cmd in (["net", "start", "w32time"], ["w32tm", "/resync", "/force"]):
+            subprocess.run(cmd, capture_output=True, text=True)
+        still = link.clock_problem(link.clock_offset())
+        print("  The clock is right now." if not still else f"  Still off: {still}.")
+    print()
+
+
 def add(config_path=None):
     """camagent add: set up another camera on this machine."""
     import copy
@@ -742,6 +759,7 @@ def add(config_path=None):
     else:
         print(f"Adding camera #{n} on this computer. Press Enter to keep a value shown in [brackets].")
         print("You'll need this camera's IP address and login, and to sign in to YonderView (or its settings block).")
+    _check_clock()
     ffmpeg, ffprobe = _tools(cam)
     _walk(cam, ffmpeg, ffprobe, main_path)
     _finish(cam, main_path, cams)
