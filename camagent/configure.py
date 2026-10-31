@@ -120,48 +120,48 @@ def step_find_camera(cfg):
     cam["password"] = ask_secret("Camera password", cam["password"])
 
 
-MAKE_LOGIN = f"Create a login named \"{camera.LOGIN_NAME}\" on the camera for this (recommended)"
+MAKE_LOGIN = f"Make up a login for YonderView (\"{camera.LOGIN_NAME}\" and a strong password) to add on the camera (recommended)"
 OWN_LOGIN = "Use a login the camera already has"
+
+ADD_LOGIN_STEPS = """In the camera's web page (signed in as its admin), add this login. Menus vary by model:
+  * Amcrest / Dahua:  Setup > System > Account. Add it under ONVIF User, and also under
+                      Users (the normal list) for exact degrees on the map
+  * Hikvision:        Configuration > Network > Advanced Settings > Integration Protocol > Add
+  * Reolink:          Settings > Users > Add User
+  * Others: look for Users or ONVIF User under System, Security or Network.
+Rights: Operator (or a User allowed to use PTZ). Not Administrator: YonderView doesn't need it."""
 
 
 def _make_login(cam):
-    """Setup's "Create a login": CamAgent makes it with a new 16-character password (camera.create_login). Returns
-    False to ask for an existing login instead."""
-    print(f"  CamAgent makes the login \"{camera.LOGIN_NAME}\" on the camera with a new 16-character password and")
-    print("  saves it here (you don't need to know it). For that it needs the camera's admin login, once; the admin")
-    print("  password isn't saved.")
-    admin = ask("Camera's admin username", "admin")
-    admin_pw = ask_secret("Camera's admin password")
-    replace = False
+    """Setup's "Make up a login": CamAgent picks the name and a new 16-character password and shows them; the host
+    adds them on the camera (CamAgent never uses the camera's admin login). Returns False to enter one instead."""
+    name, pw = camera.LOGIN_NAME, camera.new_password()
+    print()
+    print(f"    Username:  {name}")
+    print(f"    Password:  {pw}")
+    print()
+    print(ADD_LOGIN_STEPS)
+    print("Type them exactly (capital letters matter). CamAgent saves them here; you don't need to keep a copy.")
     while True:
-        print("  Making the login...")
+        input("Press Enter when the login is added on the camera...")
+        print("  Checking the login...")
         try:
-            name, pw = camera.create_login(cam["host"], cam["onvif_port"], admin, admin_pw, replace=replace)
+            camera.onvif_connect(cam["host"], cam["onvif_port"], name, pw).devicemgmt.GetDeviceInformation()
             break
-        except camera.LoginExists:
-            print(f"  The camera already has a login named \"{camera.LOGIN_NAME}\" (from an earlier setup?).")
-            if not yes("  Give it a new password? (Anything else using it would need the new one)", default=True):
-                return False
-            replace = True
         except Exception as e:  # noqa: BLE001
-            msg = camera.friendly_error(e)
-            print(f"  That didn't work: {msg}")
-            if "login rejected" in msg:
-                print("  (The admin username or password was refused. Each wrong try counts toward the camera's")
-                print("  lockout, so check them in the camera's web page first.)")
-            else:
-                print("  Some cameras don't let other programs make logins. Make one in the camera's web page")
-                print("  instead (Operator rights), then enter it here.")
-            return False
+            print(f"  The camera didn't accept it yet: {camera.friendly_error(e)}")
+            print("  (Each try counts toward the camera's lockout, so check the login was saved before trying again.)")
+            if choose(["I've fixed it: check again", "Enter a different login instead"], str) != "I've fixed it: check again":
+                return False
     cam["username"], cam["password"] = name, pw
-    print(f"  Done: CamAgent signs in to the camera as \"{name}\" (Operator).")
+    print(f"  Works: CamAgent signs in to the camera as \"{name}\".")
     _exact_needs_web_user(cam, name, pw)
     return True
 
 
 def _exact_needs_web_user(cam, name, pw):
     """Amcrest and Dahua keep ONVIF users apart from their normal ones; the exact degrees (exact.py) need a normal
-    user. If the new login is refused there, show its password once so the host can add it."""
+    user. If the new login is refused there, say so (with the login again) so the host can add it."""
     from . import exact
     try:
         maker = camera.onvif_connect(cam["host"], cam["onvif_port"], name, pw).devicemgmt.GetDeviceInformation()
@@ -172,10 +172,10 @@ def _exact_needs_web_user(cam, name, pw):
     r = exact.Reader(cam["host"], name, pw)
     if r.read() is not None or r.off != exact.REFUSED_NOTE:
         return
-    print("  Optional, for exact degrees on the map: this camera keeps ONVIF logins apart from its normal ones.")
-    print("  In the camera's web page, Setup > System > Account > Add, add the same login as a normal user:")
+    print("  Optional, for exact degrees on the map: the login works for ONVIF but isn't one of the camera's normal")
+    print("  users yet. In the camera's web page, Setup > System > Account > Users > Add, add the same login:")
     print(f"    username {name}   password {pw}   (rights: Operator, or a User with PTZ allowed)")
-    print("  Shown only now. Without it YonderView still works; the map uses the ONVIF position instead.")
+    print("  Without it YonderView still works; the map uses the ONVIF position instead.")
 
 
 def _move_test(cam):

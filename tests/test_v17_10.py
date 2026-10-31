@@ -81,43 +81,30 @@ from camagent import configure
 pw = camera.new_password()
 assert len(pw) == 16 and pw.isalnum() and any(c.isdigit() for c in pw) and not set(pw) & set("0O1lI")
 
-made = {}
-class DM:
-    def __init__(self, users): self.users = users
-    def GetUsers(self): return [NS(Username=u) for u in self.users]
-    def CreateUsers(self, req): made["create"] = req["User"][0]
-    def SetUser(self, req): made["set"] = req["User"][0]
-    def GetDeviceInformation(self): return NS(Manufacturer="X")
-def connect_with(users):
-    def connect(host, port, user, password):
-        if user == "admin" and password != "adminpw":
-            raise Exception("401 login rejected")
-        if user == camera.LOGIN_NAME and password != (made.get("create") or made.get("set") or {}).get("Password"):
-            raise Exception("401 login rejected")
-        return NS(devicemgmt=DM(users))
-    return connect
-with mock.patch.object(camera, "onvif_connect", connect_with(["admin"])), mock.patch.object(camera.time, "sleep", lambda s: None):
-    name, pw = camera.create_login("10.0.0.5", 80, "admin", "adminpw")
-    assert name == "yonderview" and made["create"] == {"Username": "yonderview", "Password": pw, "UserLevel": "Operator"}
-made.clear()
-with mock.patch.object(camera, "onvif_connect", connect_with(["admin", "yonderview"])), mock.patch.object(camera.time, "sleep", lambda s: None):
-    try:
-        camera.create_login("10.0.0.5", 80, "admin", "adminpw"); raise AssertionError("should refuse")
-    except camera.LoginExists:
-        pass
-    assert not made
-    # setup: exists -> "give it a new password?" yes -> SetUser
-    cam = {"host": "10.0.0.5", "onvif_port": 80, "username": "", "password": ""}
-    answers = iter(["admin", "y"])
-    with mock.patch.object(builtins, "input", lambda *a: next(answers)), mock.patch("getpass.getpass", lambda *a: "adminpw"), \
-            mock.patch.object(configure, "_exact_needs_web_user", lambda *a: None):
-        assert configure._make_login(cam)
-    assert cam["username"] == "yonderview" and cam["password"] == made["set"]["Password"] and "create" not in made
-    # a wrong admin password: tried once, then setup asks for an existing login
-    cam = {"host": "10.0.0.5", "onvif_port": 80, "username": "", "password": ""}
-    answers = iter(["admin"])
-    with mock.patch.object(builtins, "input", lambda *a: next(answers)), mock.patch("getpass.getpass", lambda *a: "nope"):
-        assert configure._make_login(cam) is False and cam["username"] == ""
+# setup shows a made-up login, waits while the host adds it, checks it once per "check again"
+logins = []
+def connect(host, port, user, password):
+    logins.append((user, password))
+    if len(logins) < 2:
+        raise Exception("401 Unauthorized")
+    return NS(devicemgmt=NS(GetDeviceInformation=lambda: NS(Manufacturer="X")))
+cam = {"host": "10.0.0.5", "onvif_port": 80, "username": "", "password": ""}
+answers = iter(["", "1", ""])               # Enter (not added yet) -> "check again" -> Enter
+import io, contextlib
+out = io.StringIO()
+with mock.patch.object(builtins, "input", lambda *a: next(answers)), mock.patch.object(camera, "onvif_connect", connect), \
+        mock.patch.object(configure, "_exact_needs_web_user", lambda *a: None), contextlib.redirect_stdout(out):
+    assert configure._make_login(cam)
+assert cam["username"] == "yonderview" and len(cam["password"]) == 16 and cam["password"] in out.getvalue()
+assert len(logins) == 2 and all(u == "yonderview" for u, _ in logins)     # never the admin login
+assert "admin" not in " ".join(u for u, _ in logins) and "Not Administrator" in out.getvalue()
+# giving up on it: enter a different login
+cam = {"host": "10.0.0.5", "onvif_port": 80, "username": "", "password": ""}
+logins.clear(); answers = iter(["", "2"])
+with mock.patch.object(builtins, "input", lambda *a: next(answers)), \
+        mock.patch.object(camera, "onvif_connect", lambda *a: (_ for _ in ()).throw(Exception("401 Unauthorized"))), \
+        contextlib.redirect_stdout(io.StringIO()):
+    assert configure._make_login(cam) is False and cam["username"] == ""
 
 # ---- the move-and-read test ----
 class FakePTZ:
@@ -160,8 +147,7 @@ with mock.patch.object(onvif_pkg, "ONVIFCamera", timeout_first):
     assert camera.onvif_connect("h", 80, "u", "p") == "cam" and tries == [True, None]
 print("v0.17.10 one try OK")
 
-# ---- Amcrest: the new ONVIF login refused for exact degrees -> its password shown once, with the steps ----
-import io, contextlib
+# ---- Amcrest: the new login refused for exact degrees -> the steps to add it as a normal user ----
 dev = lambda maker: NS(devicemgmt=NS(GetDeviceInformation=lambda: NS(Manufacturer=maker)))
 for maker, read, shown in (("Amcrest", (None, exact.REFUSED_NOTE), True), ("Amcrest", ({"pan": 1.0}, ""), False),
                            ("HIKVISION", (None, exact.REFUSED_NOTE), False)):

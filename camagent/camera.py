@@ -258,7 +258,7 @@ def describe_position(check):
     return True, text
 
 
-# ---------- a login just for YonderView (0.17.10) ----------
+# ---------- a login just for YonderView (0.17.10: setup makes one up; the host adds it on the camera) ----------
 
 LOGIN_NAME = "yonderview"
 _PW_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"   # no 0/O, 1/l/I: easy to type if needed
@@ -271,39 +271,6 @@ def new_password(n=16):
         pw = "".join(secrets.choice(_PW_CHARS) for _ in range(n))
         if any(c.isupper() for c in pw) and any(c.islower() for c in pw) and any(c.isdigit() for c in pw):
             return pw
-
-
-class LoginExists(Exception):
-    pass
-
-
-def create_login(host, port, admin_user, admin_password, name=LOGIN_NAME, replace=False):
-    """Make an Operator login on the camera over ONVIF (CreateUsers, the standard way), with a new password, and
-    check it works. Needs an administrator login, used for this only. LoginExists if `name` is there already and
-    replace is False; with replace, that login gets the new password (SetUser). Returns (name, password)."""
-    admin = onvif_connect(host, port, admin_user, admin_password)
-    dm = admin.devicemgmt
-    try:
-        users = {getattr(u, "Username", "") for u in (dm.GetUsers() or [])}
-    except Exception:  # noqa: BLE001
-        users = set()
-    password = new_password()
-    user = {"Username": name, "Password": password, "UserLevel": "Operator"}
-    if name in users:
-        if not replace:
-            raise LoginExists(name)
-        dm.SetUser({"User": [user]})
-    else:
-        dm.CreateUsers({"User": [user]})
-    last = None
-    for wait in (2, 5):                       # some cameras take a moment to start accepting a new login
-        time.sleep(wait)
-        try:
-            onvif_connect(host, port, name, password).devicemgmt.GetDeviceInformation()
-            return name, password
-        except Exception as e:  # noqa: BLE001
-            last = e
-    raise RuntimeError(f"the camera made the login, but didn't accept it afterwards ({friendly_error(last)})")
 
 
 # ---------- does PTZ position follow a move? (setup's test, 0.17.10) ----------
