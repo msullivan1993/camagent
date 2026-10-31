@@ -244,6 +244,10 @@ def _check_camera(r, cfg, ffprobe):
                        "safer: make a login on the camera just for CamAgent, with Operator (or User) rights; "
                        "Operator is enough for turning, zoom and presets. Then change the camera's login here: "
                        + CHANGE)
+            ok, text = camera.describe_position(info.get("position"))
+            if ok is not None:
+                r.line(OK if ok else WARN, "PTZ position", text,
+                       None if ok else "restarting the camera sometimes fixes this; some cameras never report it")
             if not any(p["ptz"] for p in info["profiles"]):
                 r.line(WARN, "Camera controls", "remote turn and zoom (PTZ) is on, but this camera doesn't offer it",
                        f"if the camera doesn't turn or zoom, answer No to PTZ in: {CHANGE}")

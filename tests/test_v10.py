@@ -88,7 +88,7 @@ except link.LinkError as e:
 d = Path(tempfile.mkdtemp()); main = d / "camagent.toml"
 m = config.load_or_defaults(main); m["account"]["site"] = SITE; config.save_main(m, main)
 state["polls"] = 0
-answers = iter(["n", "10.0.0.9", "", "admin", "2",     # no search, address, port, user; ONVIF fails -> go on without
+answers = iter(["n", "10.0.0.9", "", "2", "admin", "2",     # no search, address, port, user; ONVIF fails -> go on without
                 "n", "rtsp://10.0.0.9/main", "n",       # no suggestions, RTSP URL, no PTZ
                 "1",                                     # Server: sign in to YonderView
                 "1",                                     # which camera: Ridge
@@ -106,6 +106,7 @@ patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch.object(configure.service, "is_installed", lambda: False),
            mock.patch.object(configure, "_ask_auto_update", lambda *a: None),
            mock.patch.object(configure, "step_versions", lambda *a: None),
+           mock.patch.object(configure, "_move_test", lambda *a: None),
            mock.patch.object(configure.service, "is_admin", lambda: True)]
 for p in patches: p.start()
 configure.add(main)

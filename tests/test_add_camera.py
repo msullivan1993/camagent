@@ -9,7 +9,7 @@ d = Path(tempfile.mkdtemp()); main = d / "camagent.toml"
 block = ["CAMERA=newcam_0003",
          "SRT_URL=srt://ingest.yonderview.net:8890?streamid=publish:newcam_0003:newcam_0003:PW&latency=400000&pkt_size=1316&passphrase=PHRASE&pbkeylen=16",
          "MQTT_HOST=mqtt.yonderview.net", "MQTT_PORT=8883", "MQTT_TLS=true", "MQTT_USER=newcam_0003", "MQTT_PASS=MQ", ""]
-answers = iter(["n", "10.0.0.5", "", "admin",          # find camera: no search, host, port, user
+answers = iter(["n", "10.0.0.5", "", "2", "admin",   # login: use an existing one          # find camera: no search, host, port, user
                 "2",                                    # ONVIF failed: continue without it
                 "rtsp://10.0.0.5:554/stream1", "n",     # stream URL, no PTZ
                 "2", *block, "",                             # settings block, MQTT port default
@@ -22,7 +22,8 @@ patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch.object(configure, "test_mqtt", lambda cfg: (True, "ok")),
            mock.patch.object(configure.service, "is_installed", lambda: False),
            mock.patch.object(configure, "_ask_auto_update", lambda *a: None),
-           mock.patch.object(configure, "step_versions", lambda *a: None),   # its own tests: test_v17_8
+           mock.patch.object(configure, "step_versions", lambda *a: None),
+           mock.patch.object(configure, "_move_test", lambda *a: None),   # its own tests: test_v17_8
            mock.patch.object(configure.service, "is_admin", lambda: True)]
 for p in patches: p.start()
 configure.add(main)
@@ -47,9 +48,9 @@ def inspect(host, port, user, pw):
          "ptz": True, "rtsp_url": "rtsp://10.0.0.6/main"}]}
 probes = iter([None, [{"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080}]])
 mqtt_results = iter([(False, "broker refused the login"), (True, "ok")])
-answers = iter(["n", "10.0.0.6", "", "admin",          # first try: web login
+answers = iter(["n", "10.0.0.6", "", "2", "admin",          # first try: web login
                 "1",                                    # ONVIF rejected -> go back
-                "", "", "", "onvif",                    # search? (no), keep host, keep port, ONVIF user
+                "", "", "", "3", "onvif",            # (3: an existing login, not the current one)                    # search? (no), keep host, keep port, ONVIF user
                 "1", "y",                               # pick profile 1, enable PTZ
                 "1", "rtsp://10.0.0.6/main2",           # stream unreadable -> enter a different URL
                 "2", *block, "",                             # settings block, MQTT port
@@ -65,7 +66,8 @@ patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch.object(configure, "test_mqtt", lambda cfg: next(mqtt_results)),
            mock.patch.object(configure.service, "is_installed", lambda: False),
            mock.patch.object(configure, "_ask_auto_update", lambda *a: None),
-           mock.patch.object(configure, "step_versions", lambda *a: None),   # its own tests: test_v17_8
+           mock.patch.object(configure, "step_versions", lambda *a: None),
+           mock.patch.object(configure, "_move_test", lambda *a: None),   # its own tests: test_v17_8
            mock.patch.object(configure.service, "is_admin", lambda: True)]
 for p in patches: p.start()
 configure.add(main)
@@ -93,7 +95,7 @@ real_choose = configure.choose
 def spy_choose(items, label, allow_none_text=None):
     labels.extend(label(i) for i in items)
     return real_choose(items, label, allow_none_text)
-answers = iter(["n", "10.0.0.7", "", "onvif",
+answers = iter(["n", "10.0.0.7", "", "2", "onvif",
                 "2",                       # list shows H.264 first: pick #2 = the H.265 main stream
                 "2",                       # H.265 -> pick a different stream
                 "2",                       # pick main again (camera now switched to H.264)...
@@ -110,11 +112,13 @@ patches = [mock.patch.object(builtins, "input", lambda *a: next(answers)),
            mock.patch.object(configure, "test_mqtt", lambda cfg: (True, "ok")),
            mock.patch.object(configure.service, "is_installed", lambda: False),
            mock.patch.object(configure, "_ask_auto_update", lambda *a: None),
-           mock.patch.object(configure, "step_versions", lambda *a: None),   # its own tests: test_v17_8
+           mock.patch.object(configure, "step_versions", lambda *a: None),
+           mock.patch.object(configure, "_move_test", lambda *a: None),   # its own tests: test_v17_8
            mock.patch.object(configure.service, "is_admin", lambda: True)]
 for p in patches: p.start()
 configure.add(main)
 for p in patches: p.stop()
+labels = [x for x in labels if x not in (configure.MAKE_LOGIN, configure.OWN_LOGIN)]   # the login choice
 assert labels[0].startswith("sub: H264"), labels[0]                 # H.264 listed first
 assert "won't play" in labels[1]                                    # H.265 flagged
 _, cams, _ = config.load_all(main)

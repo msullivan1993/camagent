@@ -141,9 +141,12 @@ def onvif_connect(host, port, user, password):
     # camera's time first (no login needed) and stamping with it makes a wrong clock on this PC harmless (0.17.5:
     # a new mini PC, three hours off, couldn't log in to its camera). A camera that won't tell its time without a
     # login: connect as before.
+    # A refused login isn't tried the second way (0.17.10): cameras count each refusal toward their lockout.
     try:
         return ONVIFCamera(host, int(port), user, password, str(WSDL_DIR), no_cache=True, adjust_time=True)
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        if friendly_error(e).startswith("login rejected"):
+            raise
         return ONVIFCamera(host, int(port), user, password, str(WSDL_DIR), no_cache=True)
 
 
@@ -194,14 +197,163 @@ def onvif_inspect(host, port, user, password) -> dict:
             "rtsp_url": uri,
             "ptz": bool(getattr(p, "PTZConfiguration", None)),
         })
+    manufacturer = getattr(info, "Manufacturer", "")
     return {
         "login_level": login_level(cam, user),
-        "manufacturer": getattr(info, "Manufacturer", ""),
+        "position": ptz_position_check(cam, media, host, user, password, manufacturer),
+        "manufacturer": manufacturer,
         "model": getattr(info, "Model", ""),
         "firmware": getattr(info, "FirmwareVersion", ""),
         "serial": getattr(info, "SerialNumber", ""),
         "profiles": profiles,
     }
+
+
+def ptz_position_check(cam, media, host, user, password, manufacturer=""):
+    """Does the camera answer where it points (0.17.10, for setup and the checks)? {"onvif": {pan, tilt, zoom} or
+    None, "error": why not, "exact": degrees on Dahua-family cameras or None, "exact_note": why not}. None for a
+    camera without PTZ. Read-only: nothing moves."""
+    try:
+        prof = next((p for p in media.GetProfiles() if getattr(p, "PTZConfiguration", None)), None)
+    except Exception:  # noqa: BLE001
+        prof = None
+    if prof is None:
+        return None
+    out = {"onvif": None, "error": "", "exact": None, "exact_note": ""}
+    try:
+        st = cam.create_ptz_service().GetStatus({"ProfileToken": prof.token})
+        pos = getattr(st, "Position", None)
+        pt = getattr(pos, "PanTilt", None) if pos else None
+        zoom = getattr(getattr(pos, "Zoom", None), "x", None) if pos else None
+        if pt is not None and getattr(pt, "x", None) is not None:
+            out["onvif"] = {"pan": round(float(pt.x), 4), "tilt": round(float(pt.y or 0), 4),
+                            "zoom": round(float(zoom), 4) if zoom is not None else None}
+        else:
+            out["error"] = "the camera answered, but without a position"
+    except Exception as e:  # noqa: BLE001
+        out["error"] = friendly_error(e)
+    from . import exact
+    if exact.is_dahua(manufacturer):
+        r = exact.Reader(host, user, password)
+        out["exact"] = r.read()
+        out["exact_note"] = r.off
+    return out
+
+
+def describe_position(check):
+    """(ok, text) about a ptz_position_check result, for people."""
+    if check is None:
+        return None, ""
+    if not check["onvif"]:
+        return False, ("the camera didn't say where it points (" + (check["error"] or "no answer") + "): the map can "
+                       "show its direction only from presets picked on YonderView")
+    o = check["onvif"]
+    text = f"pan {o['pan']:+.3f}, tilt {o['tilt']:+.3f}" + (f", zoom {o['zoom']:.3f}" if o["zoom"] is not None else "")
+    e = check.get("exact")
+    if e:
+        text += (f"; exact: {e['pan']:.1f}° across, {e['tilt']:.1f}° " + ("down" if e["tilt"] >= 0 else "up")
+                 + (f", zoom {e['zoom']:g}x" if e.get("zoom") else "") + " (YonderView sets up tilt and zoom from these)")
+    elif check.get("exact_note"):
+        text += "; exact degrees: " + check["exact_note"]
+    return True, text
+
+
+# ---------- a login just for YonderView (0.17.10) ----------
+
+LOGIN_NAME = "yonderview"
+_PW_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"   # no 0/O, 1/l/I: easy to type if needed
+
+
+def new_password(n=16):
+    """Letters and digits only (some cameras refuse symbols), at least one of each kind."""
+    import secrets
+    while True:
+        pw = "".join(secrets.choice(_PW_CHARS) for _ in range(n))
+        if any(c.isupper() for c in pw) and any(c.islower() for c in pw) and any(c.isdigit() for c in pw):
+            return pw
+
+
+class LoginExists(Exception):
+    pass
+
+
+def create_login(host, port, admin_user, admin_password, name=LOGIN_NAME, replace=False):
+    """Make an Operator login on the camera over ONVIF (CreateUsers, the standard way), with a new password, and
+    check it works. Needs an administrator login, used for this only. LoginExists if `name` is there already and
+    replace is False; with replace, that login gets the new password (SetUser). Returns (name, password)."""
+    admin = onvif_connect(host, port, admin_user, admin_password)
+    dm = admin.devicemgmt
+    try:
+        users = {getattr(u, "Username", "") for u in (dm.GetUsers() or [])}
+    except Exception:  # noqa: BLE001
+        users = set()
+    password = new_password()
+    user = {"Username": name, "Password": password, "UserLevel": "Operator"}
+    if name in users:
+        if not replace:
+            raise LoginExists(name)
+        dm.SetUser({"User": [user]})
+    else:
+        dm.CreateUsers({"User": [user]})
+    last = None
+    for wait in (2, 5):                       # some cameras take a moment to start accepting a new login
+        time.sleep(wait)
+        try:
+            onvif_connect(host, port, name, password).devicemgmt.GetDeviceInformation()
+            return name, password
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise RuntimeError(f"the camera made the login, but didn't accept it afterwards ({friendly_error(last)})")
+
+
+# ---------- does PTZ position follow a move? (setup's test, 0.17.10) ----------
+
+def ptz_move_test(host, port, user, password, token="", seconds=0.7):
+    """Turn the camera a little, read its position, put it back. {"before", "after", "follows": bool, "back": bool}.
+    Raises if the camera won't connect or move."""
+    cam = onvif_connect(host, port, user, password)
+    ptz = cam.create_ptz_service()
+    if not token:
+        media = cam.create_media_service()
+        token = next(p.token for p in media.GetProfiles() if getattr(p, "PTZConfiguration", None))
+
+    def where():
+        st = ptz.GetStatus({"ProfileToken": token})
+        pt = st.Position.PanTilt
+        z = getattr(getattr(st.Position, "Zoom", None), "x", None)
+        return {"pan": float(pt.x), "tilt": float(pt.y or 0), "zoom": None if z is None else float(z)}
+
+    try:
+        before = where()
+    except Exception:  # noqa: BLE001
+        before = None
+
+    def turn(x):
+        ptz.ContinuousMove({"ProfileToken": token, "Velocity": {"PanTilt": {"x": x, "y": 0.0}}})
+        time.sleep(seconds)
+        ptz.Stop({"ProfileToken": token, "PanTilt": True, "Zoom": True})
+        time.sleep(1.5)                                    # let it settle before asking where it is
+
+    turn(0.3)
+    try:
+        after = where()
+    except Exception:  # noqa: BLE001
+        after = None
+    back = False
+    if before is not None:
+        pos = {"PanTilt": {"x": before["pan"], "y": before["tilt"]}}
+        if before["zoom"] is not None:
+            pos["Zoom"] = {"x": before["zoom"]}
+        try:
+            ptz.AbsoluteMove({"ProfileToken": token, "Position": pos})
+            back = True
+        except Exception:  # noqa: BLE001
+            pass
+    if not back:
+        turn(-0.3)                                         # the same move the other way
+        back = True
+    follows = bool(before and after and abs(after["pan"] - before["pan"]) > 0.003)
+    return {"before": before, "after": after, "follows": follows, "back": back}
 
 
 # ---------- ffmpeg / ffprobe ----------

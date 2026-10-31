@@ -36,6 +36,7 @@ class PTZ:
         self.commanded = None          # last absolute position camagent sent (stands in for fake position reports)
         self.reports_position = None   # what the camera says up front (ONVIF StatusPosition): True, False, or unknown
         self.onvif = self.source = None
+        self.exact = None              # exact degrees reader, on Dahua-family cameras (0.17.10)
 
     # ---------- connection ----------
     def start(self):
@@ -88,6 +89,13 @@ class PTZ:
         except Exception as e:  # noqa: BLE001 - some cameras refuse GetStatus but still move: note, don't fail
             self.status_fails += 1
             self.log.warning("connected, but the camera didn't answer a PTZ position request: %s", friendly_error(e))
+        self.exact = None
+        try:                                   # Dahua, Amcrest...: their own exact degrees (exact.py)
+            from . import exact
+            if exact.is_dahua(getattr(cam.devicemgmt.GetDeviceInformation(), "Manufacturer", "")):
+                self.exact = exact.Reader(c["host"], c["username"], c["password"], log=self.log)
+        except Exception:  # noqa: BLE001
+            pass
         with self._lock:
             self.ptz, self.token, self.connected = ptz, chosen.token, True
             self.lost_since = None
@@ -232,9 +240,13 @@ class PTZ:
         if pt is None or getattr(pt, "x", None) is None:
             return None
         zoom = getattr(getattr(pos, "Zoom", None), "x", None)
-        return {"pan": round(float(pt.x), 4), "tilt": round(float(pt.y or 0), 4),
-                "zoom": round(float(zoom), 4) if zoom is not None else None,
-                "space": getattr(pt, "space", "") or ""}
+        out = {"pan": round(float(pt.x), 4), "tilt": round(float(pt.y or 0), 4),
+               "zoom": round(float(zoom), 4) if zoom is not None else None,
+               "space": getattr(pt, "space", "") or ""}
+        deg = self.exact.read() if self.exact is not None else None
+        if deg:
+            out["deg"] = deg
+        return out
 
     LOST_NOTICE_S = 120           # not connected this long: tell the host
     FAILS_NOTICE = 6              # position requests failing in a row (about 30 s): tell the host
@@ -253,6 +265,9 @@ class PTZ:
         if self.status_fails >= self.FAILS_NOTICE and getattr(self, "reports_position", None) is not False:
             return ("the camera's PTZ isn't answering position requests (its controls may still work): restarting "
                     "the camera usually fixes this")
+        from .exact import REFUSED_NOTE
+        if self.exact is not None and self.exact.off == REFUSED_NOTE:
+            return REFUSED_NOTE
         return ""
 
     def health(self):

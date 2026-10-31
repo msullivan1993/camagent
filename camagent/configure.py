@@ -107,11 +107,78 @@ def step_find_camera(cfg):
             print("  You can still type the camera's IP address below.")
     cam["host"] = ask("Camera's IP address (four numbers with dots, like 192.168.1.64)", cam["host"])
     cam["onvif_port"] = ask_int("Camera's ONVIF port (not sure? press Enter; Reolink cameras use 8000)", cam["onvif_port"])
-    print("  Next, the camera's own login: the one for its app or web page (not your YonderView login).")
-    print("  Safer: a login made on the camera just for CamAgent, with Operator rights (enough for turning, zoom and")
-    print("  presets), rather than the camera's admin login. The admin login works too.")
+    print("  Next, the camera's own login (not your YonderView login). Safest: a login just for YonderView, with")
+    print("  Operator rights (turning, zoom and presets; it can't change the camera's settings).")
+    keep = f"Keep this camera's current login ({cam['username']})" if cam.get("username") else None
+    how = choose([o for o in (keep, MAKE_LOGIN, OWN_LOGIN) if o], str)
+    if how == keep:
+        return
+    if how == MAKE_LOGIN and _make_login(cam):
+        return
+    print("  The login for the camera's app or web page. Some cameras need a separate ONVIF user for this.")
     cam["username"] = ask("Camera username", cam["username"])
     cam["password"] = ask_secret("Camera password", cam["password"])
+
+
+MAKE_LOGIN = f"Create a login named \"{camera.LOGIN_NAME}\" on the camera for this (recommended)"
+OWN_LOGIN = "Use a login the camera already has"
+
+
+def _make_login(cam):
+    """Setup's "Create a login": CamAgent makes it with a new 16-character password (camera.create_login). Returns
+    False to ask for an existing login instead."""
+    print(f"  CamAgent makes the login \"{camera.LOGIN_NAME}\" on the camera with a new 16-character password and")
+    print("  saves it here (you don't need to know it). For that it needs the camera's admin login, once; the admin")
+    print("  password isn't saved.")
+    admin = ask("Camera's admin username", "admin")
+    admin_pw = ask_secret("Camera's admin password")
+    replace = False
+    while True:
+        print("  Making the login...")
+        try:
+            name, pw = camera.create_login(cam["host"], cam["onvif_port"], admin, admin_pw, replace=replace)
+            break
+        except camera.LoginExists:
+            print(f"  The camera already has a login named \"{camera.LOGIN_NAME}\" (from an earlier setup?).")
+            if not yes("  Give it a new password? (Anything else using it would need the new one)", default=True):
+                return False
+            replace = True
+        except Exception as e:  # noqa: BLE001
+            msg = camera.friendly_error(e)
+            print(f"  That didn't work: {msg}")
+            if "login rejected" in msg:
+                print("  (The admin username or password was refused. Each wrong try counts toward the camera's")
+                print("  lockout, so check them in the camera's web page first.)")
+            else:
+                print("  Some cameras don't let other programs make logins. Make one in the camera's web page")
+                print("  instead (Operator rights), then enter it here.")
+            return False
+    cam["username"], cam["password"] = name, pw
+    print(f"  Done: CamAgent signs in to the camera as \"{name}\" (Operator).")
+    return True
+
+
+def _move_test(cam):
+    """Setup's move-and-read test: turns the camera a little and back, and says whether its position follows."""
+    if not yes("Test the controls now? The camera turns a little and back (about 5 seconds)", default=True):
+        return
+    try:
+        r = camera.ptz_move_test(cam["host"], cam["onvif_port"], cam["username"], cam["password"],
+                                 cam.get("ptz_profile", ""))
+    except Exception as e:  # noqa: BLE001
+        print(f"  The camera didn't take the move: {camera.friendly_error(e)}")
+        print("  If its login is limited, it may need Operator rights for turning. You can change that later.")
+        return
+    if r["follows"]:
+        b, a = r["before"], r["after"]
+        print(f"  Works: it turned (pan {b['pan']:+.3f} to {a['pan']:+.3f}) and went back. YonderView can show")
+        print("  which way it's pointing on the map.")
+    elif r["before"] is None or r["after"] is None:
+        print("  It took the move, but didn't say where it points: the map shows its direction from presets")
+        print("  picked on YonderView instead.")
+    else:
+        print("  It took the move, but said the same position before and after. Did it turn? If it did, it")
+        print("  reports a fixed position: the map shows its direction from presets picked on YonderView instead.")
 
 
 RETRY_CAMERA = "Re-enter the camera's address and login, and try again"
@@ -177,6 +244,11 @@ def step_pick_stream(cfg, ffprobe):
             if has_ptz:
                 cam["ptz"] = yes("This camera can turn and zoom by remote control (PTZ). Allow that on YonderView? Only people\n  you give control to (and YonderView staff) can move it.", default=True)
                 cam["ptz_profile"] = ptz_profile if cam["ptz"] else ""
+                ok, text = camera.describe_position(info.get("position"))
+                if cam["ptz"] and ok is not None:
+                    print(("  Position: " if ok else "  Note: ") + text)
+                if cam["ptz"]:
+                    _move_test(cam)
             else:
                 print("  This camera can't turn or zoom by remote (no PTZ), so those controls stay off.")
                 cam["ptz"], cam["ptz_profile"] = False, ""
