@@ -65,3 +65,16 @@ with mock.patch.object(versions.os, "name", "nt"), \
 with mock.patch.object(versions.os, "name", "posix"):
     assert versions._font() == "font='DejaVu Sans'"
 print("v0.17.5 OK")
+
+# AMD: Windows' own video decoding named (not "auto", which failed on a Ryzen mini PC), and a processor-decode
+# fallback after repeated failures (0.17.6)
+pre, enc, _ = versions.encoder("amf")
+assert pre == ["-hwaccel", "d3d11va"] and "h264_amf" in enc
+pre, enc, _ = versions.encoder("amf-lite")
+assert pre == [] and "h264_amf" in enc
+assert "amf-lite" in versions.GPU_METHODS
+# a 1440p camera sent as is: the PC makes 1080p, 720p and 480p; converted to 1080p first: 720p and 480p
+ladder = [{"suffix": s, "height": h} for s, h in (("1080", 1080), ("720", 720), ("480", 480))]
+assert [v["suffix"] for v in versions.pick(ladder, 1440)] == ["1080", "720", "480"]
+assert [v["suffix"] for v in versions.pick(ladder, 1080)] == ["720", "480"]
+print("v0.17.6 OK")

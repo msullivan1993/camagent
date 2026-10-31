@@ -29,8 +29,8 @@ FAILED_CHECK_S = 6 * 3600     # how long a failed versions check is believed
 
 HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time")
 
-GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "v4l2m2m", "v4l2m2m-lite",
-               "rkmpp")
+GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "amf-lite", "v4l2m2m",
+               "v4l2m2m-lite", "rkmpp")
 MAX_FAST_FAILS = 3          # ffmpeg dying this many times within FAST_S of starting: give up (the server takes over)
 FAST_S = 20
 SLOW_SPEED = 0.9            # slower than this (x real time)...
@@ -53,8 +53,12 @@ def encoder(method):
                 ["-c:v", "h264_vaapi"], "format=nv12,hwupload")
     if base == "nvenc":
         return ["-hwaccel", "cuda"], ["-c:v", "h264_nvenc", "-preset", "p3", "-tune", "ll"], "format=nv12"
-    if base == "amf":
-        return ["-hwaccel", "auto"], ["-c:v", "h264_amf", "-quality", "speed"], "format=nv12"
+    if method == "amf":
+        # AMD: Windows' own video decoding (D3D11) named, not "auto" (0.17.5 on a Ryzen mini PC: "auto" failed with
+        # "Device creation failed" and the PC never made its versions); "amf-lite" (below) decodes on the processor
+        return ["-hwaccel", "d3d11va"], ["-c:v", "h264_amf", "-quality", "speed"], "format=nv12"
+    if method == "amf-lite":
+        return [], ["-c:v", "h264_amf", "-quality", "speed"], "format=nv12"
     if method == "v4l2m2m":                        # Raspberry Pi: decode on its video engine too
         return ["-c:v", "h264_v4l2m2m"], ["-c:v", "h264_v4l2m2m"], "format=yuv420p"
     if method == "v4l2m2m-lite":

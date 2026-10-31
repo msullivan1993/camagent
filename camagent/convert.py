@@ -23,7 +23,7 @@ LABELS = {
     "qsv": "Intel Quick Sync (GPU)", "qsv-lite": "Intel Quick Sync (GPU encoding)",
     "vaapi": "VA-API (Intel/AMD GPU)", "vaapi-lite": "VA-API (GPU encoding)",
     "nvenc": "NVIDIA (GPU)", "nvenc-lite": "NVIDIA (GPU encoding)",
-    "amf": "AMD (GPU encoding)",
+    "amf": "AMD (GPU)", "amf-lite": "AMD (GPU encoding)",
     "v4l2m2m": "Raspberry Pi video engine", "v4l2m2m-lite": "Raspberry Pi video engine (encoding)",
     "rkmpp": "Rockchip video engine (encoding)",
     "x264": "the CPU (x264)",
