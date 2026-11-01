@@ -9,6 +9,7 @@
   camagent signin             sign this computer in to your YonderView account
   camagent signout            forget this computer's YonderView sign-in
   camagent doctor [CAM]       check everything the agent needs, with fixes
+  camagent gpu-test [CAM]     compare ways the graphics chip can make a camera's versions
   camagent install-service    install and start the system service
   camagent uninstall-service  remove the system service
   camagent restart            restart the service
@@ -55,6 +56,8 @@ def main(argv=None):
     pr.add_argument("--test-moves", action="store_true", help="also check that absolute moves work (turns the camera)")
     fx = sub.add_parser("fix-stream", help="set a camera's video to what YonderView needs: H.264, up to 1080p, a keyframe every 2 s (asks first)")
     fx.add_argument("camera", nargs="?")
+    g = sub.add_parser("gpu-test", help="compare ways this PC's graphics chip can make a camera's versions (15 s each)")
+    g.add_argument("camera", nargs="?")
     sub.add_parser("version", help="show which version of CamAgent is installed")
 
     # allow --config after the subcommand too
@@ -126,6 +129,10 @@ def main(argv=None):
     elif args.cmd == "doctor":
         logging.basicConfig(level=logging.ERROR)
         from .doctor import run
+        sys.exit(run(cfg_path, args.camera))
+
+    elif args.cmd == "gpu-test":
+        from .gputest import run
         sys.exit(run(cfg_path, args.camera))
 
     elif args.cmd == "install-service":
