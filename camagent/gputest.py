@@ -52,7 +52,7 @@ def parse(text):
 
 
 def run(config_path=None, camera_id=None):
-    main, cams, problems = config.load_all(config_path or config.default_config_path())
+    _, cams, _ = config.load_all(config_path or config.default_config_path())
     cams = [c for c in cams if not camera_id or c["platform"].get("camera_id") == camera_id]
     if not cams:
         print("That camera isn't set up on this computer." if camera_id else "No cameras are set up on this computer.")
