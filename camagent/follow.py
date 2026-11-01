@@ -7,7 +7,13 @@ asks the local network who's there (the same ONVIF discovery setup uses), finds 
 camera's login works there, and moves to it. Never to a device whose MAC doesn't match, nor one where the login
 fails. The new address is kept in CamAgent's state folder (the camera's settings file isn't changed); the camera's
 Health tab says what happened, so the host can give it a fixed address.
+
+0.17.12 (security review): a device on the network can copy a MAC address, so the MAC only finds candidates. CamAgent
+moves only to an address on the same local network whose device reports the camera's own serial number (learned
+while the camera answered), never tries an address again for a day after it refused the login or didn't match, and
+the host can switch following off ([camera] follow = false).
 """
+import ipaddress
 import json
 import logging
 import os
@@ -22,7 +28,8 @@ from .config import state_dir
 
 DOWN_CHECKS = 3                 # the camera unreachable this many checks in a row...
 CHECK_S = 60                    # ...one a minute: then look for it
-LEARN_EVERY_S = 600             # until its MAC is known, try to learn it this often
+LEARN_EVERY_S = 600             # until its MAC and serial number are known, try to learn them this often
+REFUSED_S = 24 * 3600           # an address that refused the login or wasn't the camera: left alone this long
 _MAC = re.compile(r"([0-9a-f]{2})[:-]([0-9a-f]{2})[:-]([0-9a-f]{2})[:-]([0-9a-f]{2})[:-]([0-9a-f]{2})[:-]([0-9a-f]{2})",
                   re.I)
 
@@ -64,6 +71,25 @@ def onvif_mac(cam):
     return ""
 
 
+def device_serial(cam):
+    """The camera's serial number over ONVIF (its login), or ""."""
+    try:
+        return str(getattr(cam.devicemgmt.GetDeviceInformation(), "SerialNumber", "") or "").strip()[:80]
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def same_network(a, b):
+    """Both addresses on the same local network (the /24 for IPv4, the /64 for IPv6)."""
+    try:
+        x, y = ipaddress.ip_address(a), ipaddress.ip_address(b)
+        bits = 24 if x.version == 4 else 64
+        return x.version == y.version and ipaddress.ip_network(f"{x}/{bits}", strict=False) == \
+            ipaddress.ip_network(f"{y}/{bits}", strict=False)
+    except ValueError:
+        return False
+
+
 def reachable(host, port, timeout=3):
     try:
         with socket.create_connection((host, int(port)), timeout=timeout):
@@ -91,6 +117,7 @@ class Follower:
         self.log = logging.getLogger(f"{self.cid}.follow")
         self.down = 0
         self.notice = ""
+        self.refused = {}                # address -> when it refused the login or didn't match
         self.state = self._load()
         self._apply_saved()
 
@@ -133,26 +160,37 @@ class Follower:
             port = int(c.get("onvif_port") or 80)
             if host and reachable(host, port):
                 self.down = 0
-                if not self.state.get("mac") and time.monotonic() - last_learn > LEARN_EVERY_S:
+                if not (self.state.get("mac") and self.state.get("serial")) \
+                        and time.monotonic() - last_learn > LEARN_EVERY_S:
                     last_learn = time.monotonic()
                     self._learn(host)
             elif host:
                 self.down += 1
-                if self.down >= DOWN_CHECKS and self.state.get("mac"):
+                if (self.down >= DOWN_CHECKS and self.state.get("mac") and self.state.get("serial")
+                        and self.cfg["camera"].get("follow", True)):
                     self._look_for_it(host, port)
             stop.wait(CHECK_S)
 
     def _learn(self, host):
-        mac = ""
         ptz = getattr(self.agent, "ptz", None)
-        if ptz is not None and getattr(ptz, "onvif", None) is not None:
-            mac = onvif_mac(ptz.onvif)
-        if not mac:
-            mac = arp_mac(host)
-        if mac:
-            self.state["mac"] = mac
-            self._save()
-            self.log.info("camera's hardware address: %s (CamAgent finds it by this if its address changes)", mac)
+        cam = getattr(ptz, "onvif", None) if ptz is not None else None
+        if not self.state.get("mac"):
+            mac = (onvif_mac(cam) if cam is not None else "") or arp_mac(host)
+            if mac:
+                self.state["mac"] = mac
+                self._save()
+                self.log.info("camera's hardware address: %s (CamAgent finds it by this if its address changes)", mac)
+        if not self.state.get("serial"):
+            c = self.cfg["camera"]
+            try:
+                cam = cam or camera.onvif_connect(host, int(c.get("onvif_port") or 80), c.get("username", ""),
+                                                  c.get("password", ""))
+                serial = device_serial(cam)
+            except Exception:  # noqa: BLE001 - no ONVIF: no serial, so no following
+                serial = ""
+            if serial:
+                self.state["serial"] = serial
+                self._save()
 
     def _look_for_it(self, old, port):
         mac = self.state["mac"]
@@ -162,20 +200,28 @@ class Follower:
         except Exception as e:  # noqa: BLE001
             self.log.warning("couldn't search the network: %s", e)
             return
+        now = time.monotonic()
         for item in found:
             ip = item.get("host", "")
-            if not ip or ip == old or not reachable(ip, port):   # reaching it also fills the ARP table
+            if not ip or ip == old or not same_network(ip, old) or now - self.refused.get(ip, -REFUSED_S) < REFUSED_S:
                 continue
-            if arp_mac(ip) != mac:
+            if not reachable(ip, port) or arp_mac(ip) != mac:   # reaching it also fills the ARP table
                 continue
             c = self.cfg["camera"]
-            if c.get("username"):
-                try:
-                    camera.onvif_connect(ip, port, c["username"], c["password"]).devicemgmt.GetDeviceInformation()
-                except Exception as e:  # noqa: BLE001 - same MAC, but the login fails there: don't move
-                    self.log.warning("found the camera's MAC at %s, but its login didn't work there (%s); not moving",
-                                     ip, camera.friendly_error(e))
-                    continue
+            try:
+                info = camera.onvif_connect(ip, port, c.get("username", ""), c.get("password", "")) \
+                    .devicemgmt.GetDeviceInformation()
+                serial = str(getattr(info, "SerialNumber", "") or "").strip()[:80]
+            except Exception as e:  # noqa: BLE001 - same MAC, but the login fails there: don't move
+                self.refused[ip] = now
+                self.log.warning("found the camera's MAC at %s, but its login didn't work there (%s); not moving "
+                                 "(not trying it again today)", ip, camera.friendly_error(e))
+                continue
+            if serial != self.state["serial"]:
+                self.refused[ip] = now
+                self.log.warning("the device at %s has the camera's MAC but isn't the camera (another serial "
+                                 "number); not moving", ip)
+                continue
             self._moved(old, ip)
             return
         self.log.info("the camera wasn't found on the network; still trying at %s", old)
@@ -196,7 +242,8 @@ class Follower:
 
     def _use(self, host):
         c = self.cfg["camera"]
-        c["rtsp_url"] = with_host(c.get("rtsp_url", ""), host)
+        if urlparse(c.get("rtsp_url", "")).hostname == c.get("host"):     # not a video address on another device
+            c["rtsp_url"] = with_host(c.get("rtsp_url", ""), host)
         c["host"] = host
 
     @staticmethod

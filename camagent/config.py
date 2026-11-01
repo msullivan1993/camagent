@@ -314,6 +314,9 @@ def load_all(main_path=None):
         cam["_source"], cam["_legacy"] = f, False
         cams.append(cam)
     legacy_id = main["platform"].get("camera_id")
+    if legacy_id and not CAMERA_ID.fullmatch(str(legacy_id)):
+        problems.append(f"{main_path}: camera_id '{str(legacy_id)[:40]}' isn't a valid camera ID; ignored")
+        legacy_id = None
     if legacy_id and legacy_id not in seen:
         cam = copy.deepcopy(main)
         cam["_source"], cam["_legacy"] = main_path, True
@@ -428,7 +431,8 @@ def redact(url: str) -> str:
     return url
 
 
-_URL_AUTH = re.compile(r"(rtsps?|srt|https?)://[^\s/@]+@")
+# userinfo up to the last "@" before the host (a password may hold a raw "@"); any case; rtmp too (0.17.12)
+_URL_AUTH = re.compile(r"(rtsps?|rtmps?|srt|https?)://[^\s/]*@(?=[^\s@/]*(?:[/\s?#]|$))", re.I)
 _SECRETS = re.compile(r"(passphrase=)[^&\s]+|(streamid=[^:&\s]*:[^:&\s]*:[^:&\s]*:)[^&\s]+")
 
 

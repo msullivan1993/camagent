@@ -26,10 +26,10 @@ def agent(host="172.16.20.113"):
 with tempfile.TemporaryDirectory() as d, mock.patch.object(follow, "state_dir", return_value=Path(d)):
     a = agent()
     f = follow.Follower(a)
-    f.state["mac"] = "aa:bb:cc:dd:ee:ff"
+    f.state.update(mac="aa:bb:cc:dd:ee:ff", serial="SN1")
     others = [{"host": "172.16.20.40"}, {"host": "172.16.20.150"}]
     macs = {"172.16.20.40": "11:22:33:44:55:66", "172.16.20.150": "aa:bb:cc:dd:ee:ff"}
-    login = mock.Mock()
+    login = mock.Mock(return_value=NS(SerialNumber="SN1"))
     with mock.patch.object(follow.camera, "discover", return_value=others), \
             mock.patch.object(follow, "reachable", return_value=True), \
             mock.patch.object(follow, "arp_mac", side_effect=lambda ip: macs.get(ip, "")), \
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory() as d, mock.patch.object(follow, "state_dir", 
 with tempfile.TemporaryDirectory() as d, mock.patch.object(follow, "state_dir", return_value=Path(d)):
     a = agent()
     f = follow.Follower(a)
-    f.state["mac"] = "aa:bb:cc:dd:ee:ff"
+    f.state.update(mac="aa:bb:cc:dd:ee:ff", serial="SN1")
     bad = mock.Mock(side_effect=RuntimeError("401 not authorized"))
     with mock.patch.object(follow.camera, "discover", return_value=[{"host": "172.16.20.150"}]), \
             mock.patch.object(follow, "reachable", return_value=True), \
@@ -61,6 +61,43 @@ with tempfile.TemporaryDirectory() as d, mock.patch.object(follow, "state_dir", 
             mock.patch.object(follow.camera, "onvif_connect", return_value=NS(devicemgmt=NS(GetDeviceInformation=bad))):
         f._look_for_it("172.16.20.113", 80)
     assert a.cfg["camera"]["host"] == "172.16.20.113"          # same MAC but the login fails there: stays put
+    with mock.patch.object(follow.camera, "discover", return_value=[{"host": "172.16.20.150"}]), \
+            mock.patch.object(follow, "reachable", return_value=True), \
+            mock.patch.object(follow, "arp_mac", return_value="aa:bb:cc:dd:ee:ff"), \
+            mock.patch.object(follow.camera, "onvif_connect") as again:
+        f._look_for_it("172.16.20.113", 80)
+    again.assert_not_called()                                   # refused once: not tried again today
+
+# 0.17.12 (security review): the MAC only finds candidates; the device must be the camera (its serial number), on the
+# same network, and the host can switch following off
+with tempfile.TemporaryDirectory() as d, mock.patch.object(follow, "state_dir", return_value=Path(d)):
+    a = agent()
+    f = follow.Follower(a)
+    f.state.update(mac="aa:bb:cc:dd:ee:ff", serial="SN1")
+    impostor = NS(devicemgmt=NS(GetDeviceInformation=lambda: NS(SerialNumber="FAKE")))
+    with mock.patch.object(follow.camera, "discover", return_value=[{"host": "172.16.20.150"}, {"host": "10.9.9.9"}]), \
+            mock.patch.object(follow, "reachable", return_value=True), \
+            mock.patch.object(follow, "arp_mac", return_value="aa:bb:cc:dd:ee:ff"), \
+            mock.patch.object(follow.camera, "onvif_connect", return_value=impostor) as conn:
+        f._look_for_it("172.16.20.113", 80)
+    assert a.cfg["camera"]["host"] == "172.16.20.113" and a.uplink.restart_now.call_count == 0
+    assert [c.args[0] for c in conn.call_args_list] == ["172.16.20.150"]      # another network: never asked
+    assert follow.same_network("10.0.0.5", "10.0.0.200") and not follow.same_network("10.0.0.5", "10.0.1.5")
+    # a video address on another device (an NVR) isn't rewritten when the camera moves
+    a = agent()
+    a.cfg["camera"]["rtsp_url"] = "rtsp://172.16.20.2:554/ch1"
+    follow.Follower(a)._use("172.16.20.150")
+    assert a.cfg["camera"]["rtsp_url"] == "rtsp://172.16.20.2:554/ch1" and a.cfg["camera"]["host"] == "172.16.20.150"
+    # switched off by the host
+    a = agent()
+    a.cfg["camera"]["follow"] = False
+    f = follow.Follower(a)
+    f.state.update(mac="aa:bb:cc:dd:ee:ff", serial="SN1")
+    f.down = 5
+    with mock.patch.object(f, "_look_for_it") as look, mock.patch.object(follow, "reachable", return_value=False):
+        stop = mock.Mock(); stop.is_set.side_effect = [False, True]; stop.wait = lambda s: None
+        f.run(stop)
+    look.assert_not_called()
 
 # PTZ health: a note when it hasn't been reachable for minutes, or stops answering position requests
 cfg = {"platform": {"camera_id": "p1"}, "agent": {}, "camera": {}}

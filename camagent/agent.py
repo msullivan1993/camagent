@@ -223,15 +223,22 @@ class CameraAgent:
     def _tool(self, op, req):
         """The remote tools on the camera's Health tab (the website lets only the camera's owners use them)."""
         from . import tools
+        sup = getattr(self, "supervisor", None)
         if op == "tool_log":
-            return {"output": tools.recent_log(self.cam_id)}
+            return {"output": tools.recent_log(self.cam_id, others=[a.cam_id for a in getattr(sup, "agents", [])])}
         if op == "tool_restart":
-            return tools.restart_soon()
+            return tools.restart_soon(getattr(sup, "stopping", None))
         if op == "tool_update":
             return tools.request_update()
         # the checks take up to a minute: answer now, send the report when it's done (with the telemetry)
+        if not tools.DOCTOR.acquire(blocking=False):
+            return {"started": False, "error": "the checks are already running; try again in a minute"}
+
         def checks():
-            out = tools.run_doctor(getattr(self, "main_path", None), self.cam_id)
+            try:
+                out = tools.run_doctor(getattr(self, "main_path", None), self.cam_id)
+            finally:
+                tools.DOCTOR.release()
             try:
                 self.mq.publish(self.topics["telemetry"], json.dumps(dict(self._info(), tool={
                     "req": str(req)[:64], "op": "tool_doctor", "output": out})), qos=1)
@@ -521,6 +528,11 @@ class CameraAgent:
         self.mq.loop_stop()
 
 
+def _restart_asked():
+    from . import tools
+    return tools.RESTART.is_set()
+
+
 class Supervisor:
     """Runs every configured camera. A camera with a broken config is reported and skipped."""
 
@@ -536,6 +548,7 @@ class Supervisor:
             try:
                 self.agents.append(CameraAgent(cfg))
                 self.agents[-1].main_path = main_path              # for the remote checks (camagent doctor)
+                self.agents[-1].supervisor = self                  # restart from the Health tab stops everything
             except ValueError as e:
                 log.error("camera '%s' not started: %s (fix with: camagent configure %s)", cid, e, cid)
         if not self.agents:
@@ -601,4 +614,7 @@ class Supervisor:
             # leave anyway, so a restart never hangs on us; systemd cleans up what's left
             log.warning("some parts didn't stop in time; exiting anyway")
             logging.shutdown()
-            os._exit(0)
+            os._exit(75 if _restart_asked() else 0)
+        if _restart_asked():
+            logging.shutdown()
+            os._exit(75)                           # restart asked from the Health tab: the service manager restarts

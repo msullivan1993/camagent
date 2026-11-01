@@ -15,7 +15,7 @@ import time
 
 from .config import scrub, state_dir
 
-MAX_OUTPUT = 40 * 1024          # bytes sent back (the website accepts 64 KB per message)
+MAX_OUTPUT = 20 * 1024          # bytes sent back: room to spare after JSON escaping (the website takes 64 KB)
 LOG_LINES = 200
 UPDATE_FLAG = "update-now"      # in the state folder: the update job sees it and checks right away
 
@@ -53,17 +53,23 @@ def _cap(text):
     return "(earlier lines left out)\n" + data[-MAX_OUTPUT:].decode("utf-8", "ignore")
 
 
-def recent_log(cam_id, n=LOG_LINES):
-    """This camera's lines and CamAgent's general ones (not other cameras')."""
+def recent_log(cam_id, n=LOG_LINES, others=()):
+    """This camera's lines and CamAgent's general ones, without general lines that name another camera on this PC
+    (its owner may be someone else)."""
+    others = [o for o in others if o and o != cam_id]
     mine = [line for name, line in list(RING.lines)
-            if name.startswith(f"{cam_id}.") or name in ("camagent", "root") or name.startswith("camagent.")]
+            if name.startswith(f"{cam_id}.") or ((name in ("camagent", "root") or name.startswith("camagent."))
+                                                 and not any(o in line for o in others))]
     return _cap("\n".join(mine[-n:]) or "(nothing logged yet since CamAgent started)")
+
+
+DOCTOR = threading.Lock()        # one run of the checks at a time (each logs in to the camera and opens its video)
 
 
 def run_doctor(config_path, cam_id):
     """camagent doctor for this camera, as the service runs it (a minute at most)."""
     cmd = [sys.executable, "-I", "-m", "camagent"] + (["--config", str(config_path)] if config_path else [])
-    cmd += ["doctor", cam_id]
+    cmd += ["doctor", "--", cam_id]
     env = dict(os.environ, NO_COLOR="1", CAMAGENT_NO_PAUSE="1")
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env, stdin=subprocess.DEVNULL)
@@ -94,12 +100,20 @@ def clear_update_request():
         pass
 
 
-def restart_soon(delay=1.5):
-    """Exit after the answer has gone out; the service manager starts CamAgent again (systemd Restart=always,
-    WinSW restarts on a failure exit)."""
+RESTART = threading.Event()      # the Supervisor exits with 75 after stopping everything (0.17.12)
+
+
+def restart_soon(stop=None, delay=1.5):
+    """After the answer has gone out: stop everything the normal way (ffmpeg included, which Windows wouldn't end
+    for us), then exit with 75; the service manager starts CamAgent again (systemd Restart=always, WinSW restarts
+    on a failure exit). If stopping hangs, exit anyway."""
     def go():
         time.sleep(delay)
         logging.getLogger("camagent").warning("restarting (asked from the camera's Health tab)")
+        RESTART.set()
+        if stop is not None:
+            stop.set()
+            time.sleep(30)                   # the Supervisor normally exits well before this
         os._exit(75)
     threading.Thread(target=go, daemon=True, name="restart").start()
     return {"restarting": True}

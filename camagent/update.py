@@ -107,14 +107,16 @@ def _refresh_unit(config_path=None):
 
 
 def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False, if_requested=False):
-    from .release import NotSigned
     if if_requested:
         # "Update now" from the camera's Health tab (0.17.8): the service left a flag; this job runs as administrator
-        # every few minutes and normally finds nothing to do
+        # every few minutes and normally finds nothing to do. The flag is cleared first, so a failure below can't
+        # make the job fire again and again (systemd would then switch the trigger off)
         from . import tools
         if not tools.update_requested():
             return
         tools.clear_update_request()
+    from .release import NotSigned
+    if if_requested:
         _log("update asked for from the camera's Health tab on yonderview.net")
         auto, jitter = True, 0
     service._require_admin()
