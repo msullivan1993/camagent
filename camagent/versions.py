@@ -28,7 +28,8 @@ from .config import redact, rtsp_with_auth, scrub, srt_url, state_dir
 FAILED_CHECK_S = 6 * 3600     # how long a failed versions check is believed
 
 HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is backward in time",
-            "does not support H.264 B-frame")      # AMD's encoder saying it won't use B-frames (we don't want any)
+            "does not support H.264 B-frame",       # AMD's encoder saying it won't use B-frames (we don't want any)
+            "Last message repeated")                # ffmpeg repeating a note it already gave (filled the log, 0.17.13)
 
 GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "amf-lite", "v4l2m2m",
                "v4l2m2m-lite", "rkmpp")

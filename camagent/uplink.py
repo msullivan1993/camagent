@@ -13,6 +13,7 @@ from .config import redact, rtsp_with_auth, scrub, srt_url
 # ffmpeg messages that are expected with many cameras and don't affect the stream
 HARMLESS = (
     "Timestamps are unset in a packet",
+    "Last message repeated",                     # ffmpeg repeating a note it already gave (0.17.13)
 )
 
 
@@ -28,6 +29,7 @@ class Uplink(threading.Thread):
         self._last_frame_at = time.monotonic()        # monotonic: a clock change (a Pi syncing its time) isn't a stall
         self._stderr = collections.deque(maxlen=20)
         self._fast_fails = 0                      # converting: ffmpeg exits soon after starting, in a row
+        self._fell_to = None                      # converting: the method it fell back to (until a restart)
         self._audio_off_until = 0.0               # camera announces audio but sends none: video only until then
         self._audio_now = False
         self._audio_checked_at = 0.0              # last quiet check for the camera's sound (while it's missing)
@@ -40,6 +42,7 @@ class Uplink(threading.Thread):
 
     # ---------- converting to 1080p (optional) ----------
     FAST_FAILS_TO_FALL_BACK = 3
+    LITE = {"amf": "amf-lite"}                # the same encoder with the processor decoding
     AUDIO_CHECK_S = 120                       # sound missing: look for it quietly this often (video keeps going)
     AUDIO_RETRY_S = 600                       # ...or, when it can't be checked (no ffprobe), just try again this late
     NOTHING_SENT_BYTES = 32 * 1024            # less than this written out in a run: nothing really went out
@@ -53,12 +56,16 @@ class Uplink(threading.Thread):
             self.stats.pop("convert", None)
             return None
         method = s.get("encoder") or "x264"
-        if method != "x264" and self._fast_fails >= self.FAST_FAILS_TO_FALL_BACK:
-            if not self.stats.get("convert", {}).get("fallback"):
-                self.log.warning("%s keeps failing; converting on the CPU instead", convert.LABELS.get(method, method))
-            method, fallback = "x264", True
-        else:
-            fallback = False
+        current = self._fell_to or method
+        if current != "x264" and self._fast_fails >= self.FAST_FAILS_TO_FALL_BACK:
+            # first the same GPU with the processor decoding (where there's such a step), then the CPU alone; it
+            # stays there until CamAgent restarts (going back on its own blipped the stream every few minutes)
+            new = self.LITE.get(current) or "x264"
+            self.log.warning("%s keeps failing; converting with %s instead", convert.LABELS.get(current, current),
+                             convert.LABELS.get(new, new))
+            self._fell_to, self._fast_fails = new, 0
+        fallback = bool(self._fell_to)
+        method = self._fell_to or method
         self.stats["convert"] = {"height": convert.TARGET_HEIGHT, "encoder": method, "fallback": fallback,
                                  "source_height": int(s.get("source_height") or 0) or None}
         return method

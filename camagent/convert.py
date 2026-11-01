@@ -83,8 +83,12 @@ def args(method, kbps=DEFAULT_KBPS, scale=True, height=TARGET_HEIGHT):
     if method == "nvenc-lite":
         return ([], (["-vf", ",".join(sw_scale)] if sw_scale else []) +
                 ["-c:v", "h264_nvenc", "-preset", "p3", "-tune", "ll", "-rc", "cbr", *rate, *keys])
-    if method == "amf":
-        return ([], (["-vf", ",".join(sw_scale)] if sw_scale else []) +
+    if method in ("amf", "amf-lite"):
+        # decode on the graphics chip too, named (D3D11; "auto" fails on AMD); 0.17.13: before, conversion decoded
+        # the camera on the processor (a 2400GE: ~half its CPU for one 1440p camera). "amf-lite": the processor
+        # decodes, for a driver that won't
+        return ((["-hwaccel", "d3d11va"] if method == "amf" else []),
+                (["-vf", ",".join(sw_scale)] if sw_scale else []) +
                 ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cbr", *rate, *keys])
     if method in ("v4l2m2m", "v4l2m2m-lite"):
         # the Pi's H.264 engine (up to 1080p): decode on it too, or on the CPU ("-lite", for anything it can't
