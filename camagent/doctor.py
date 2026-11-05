@@ -54,6 +54,11 @@ def run(config_path=None, camera_id=None):
         r.line(OK, "Python", f"{v.major}.{v.minor}.{v.micro}")
     else:
         r.line(FAIL, "Python", f"{v.major}.{v.minor} is too old", "run the CamAgent installer again; it installs a newer Python")
+    from .storage import emmc_wear, wear_notice      # a box's built-in flash storage (0.17.15)
+    for w in emmc_wear():
+        note = wear_notice()
+        r.line(WARN if note else OK, "Storage", f"{w['device']}: about {min(w['used_pct'], 100)}% worn",
+               note or "")
 
     # --- config ---
     try:

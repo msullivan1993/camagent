@@ -363,6 +363,7 @@ class CameraAgent:
             out.append(self.ptz.problem())
         if getattr(self, "follower", None):
             out.append(self.follower.notice)
+        out.append(_cached_wear())               # a box's eMMC wearing out (0.17.15)
         return [x for x in out if x]
 
     def track_position(self, stop):
@@ -526,6 +527,21 @@ class CameraAgent:
             pass
         self.mq.disconnect()
         self.mq.loop_stop()
+
+
+_WEAR = {"at": 0.0, "note": ""}
+
+
+def _cached_wear():
+    """The storage wear note, read at most once an hour (it changes over months)."""
+    if time.monotonic() - _WEAR["at"] > 3600 or not _WEAR["at"]:
+        from .storage import wear_notice
+        try:
+            _WEAR["note"] = wear_notice()
+        except Exception:  # noqa: BLE001
+            _WEAR["note"] = ""
+        _WEAR["at"] = time.monotonic()
+    return _WEAR["note"]
 
 
 def _restart_asked():
