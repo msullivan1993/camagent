@@ -342,10 +342,10 @@ def save_camera(cam: dict, main_path=None) -> Path:
 
 
 def protect_files(main_path=None):
-    """Windows: encrypt the passwords in settings files written before 0.17.7 (run after an update or install).
-    Rewrites only files that still hold one in plain text."""
+    """Encrypt the passwords in settings files written before (Windows 0.17.7, Linux 0.17.16 with the box's key),
+    after an update or install. Rewrites only files that still hold one in plain text."""
     from . import secret
-    if not secret.on_windows():
+    if not secret.on_windows() and not secret.linux_key():
         return 0
     main_path = Path(main_path or default_config_path())
     n = 0
@@ -358,7 +358,7 @@ def protect_files(main_path=None):
         except (OSError, TypeError, ValueError):
             continue
         plain = any(isinstance(raw.get(sec, {}).get(key), str) and raw[sec][key]
-                    and not raw[sec][key].startswith(secret.PREFIX) for sec, key in secret.FIELDS)
+                    and not raw[sec][key].startswith((secret.PREFIX, secret.SEALED)) for sec, key in secret.FIELDS)
         if plain:
             save_camera(cam, main_path)
             n += 1

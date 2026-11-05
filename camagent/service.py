@@ -66,6 +66,9 @@ def _linux_unit(config_path) -> str:
             user += f"SupplementaryGroups={' '.join(groups)}\n"
     except (KeyError, ImportError):
         user = ""
+    from . import secret
+    if os.path.exists(secret.KEY_FILE):       # 0.17.16: the key for the passwords in the settings files
+        user += f"LoadCredentialEncrypted={secret.KEY_NAME}:{secret.KEY_FILE}\n"
     return f"""[Unit]
 Description=camagent (camera uplink and PTZ agent)
 After=network-online.target
@@ -272,6 +275,7 @@ def install(config_path=None):
         print(f"CamAgent now runs in the background and starts by itself with the computer. Its log is in "
               f"{base_dir() / 'logs'} (or open CamAgent > Show the recent log).")
     else:
+        _linux_seal(config_path)
         UNIT_PATH.write_text(_linux_unit(config_path), encoding="utf-8")
         _run(["systemctl", "daemon-reload"])
         _run(["systemctl", "enable", SERVICE])
@@ -306,6 +310,17 @@ def is_installed() -> bool:
     return UNIT_PATH.exists()
 
 
+def _linux_seal(config_path=None):
+    """0.17.16: make the box's key (systemd-creds) and encrypt the passwords already in the settings files."""
+    from . import secret
+    try:
+        if secret.ensure_linux_key():
+            from .config import protect_files
+            protect_files(config_path)
+    except Exception:  # noqa: BLE001 - never stop an install or update over this; files stay as they were
+        pass
+
+
 def refresh_unit(config_path=None):
     """Rewrite the service's settings so ones added in newer versions apply (after an update, or the installer):
     the systemd unit on Linux; on Windows the WinSW settings and the account it runs as (0.17)."""
@@ -329,6 +344,7 @@ def refresh_unit(config_path=None):
         return
     if not UNIT_PATH.exists():
         return
+    _linux_seal(config_path)
     UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
     _run(["systemctl", "daemon-reload"], check=False)
     _ensure_update_now(config_path)
