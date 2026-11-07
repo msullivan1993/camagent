@@ -47,3 +47,44 @@ with mock.patch.object(service, "os") as fake_os, mock.patch.object(service, "_r
     text = unit.write_text.call_args[0][0]
 assert "camagent remote --config /etc/camagent/camagent.toml" in text and "Restart=always" in text
 print("v0.18 remote OK")
+
+# ---- phase 2: a camera on this computer's network ----
+import json
+import tempfile
+from types import SimpleNamespace as NS
+
+secret_login = json.dumps({"username": "yonderview", "password": "Abcdefgh23456789"})
+# only local addresses, ever
+for host in ("8.8.8.8", "127.0.0.1", "224.0.0.1", "camera.example.com", ""):
+    ok, out = remote.run_job({"id": 1, "kind": "inspect", "payload": {"host": host}, "secret": secret_login})
+    assert not ok and ("network" in out or "address" in out), (host, out)
+with mock.patch("camagent.camera.onvif_inspect", return_value={
+        "manufacturer": "Amcrest", "model": "IP4M-1063EW", "firmware": "3.2", "login_level": "Operator",
+        "profiles": [{"name": "main", "token": "p0", "encoding": "H264", "width": 2560, "height": 1440, "fps": 30,
+                      "ptz": True, "rtsp_url": "rtsp://172.16.20.113:554/cam/realmonitor?channel=1&subtype=0"}],
+        "position": {"onvif": {"pan": 0.1}, "exact": {"pan": 10}}}) as insp:
+    ok, out = remote.run_job({"id": 2, "kind": "inspect", "payload": {"host": "172.16.20.113", "port": 80},
+                              "secret": secret_login})
+assert ok and out["model"] == "IP4M-1063EW" and out["profiles"][0]["height"] == 1440 and out["position"]["exact"]
+assert insp.call_args[0] == ("172.16.20.113", 80, "yonderview", "Abcdefgh23456789")
+# the preview: only the camera's own video address
+ok, out = remote.run_job({"id": 3, "kind": "snapshot", "payload": {"host": "172.16.20.113",
+                          "rtsp_url": "rtsp://10.0.0.9/other"}, "secret": secret_login})
+assert not ok and "isn't the camera's" in out
+with mock.patch("camagent.camera.find_ffmpeg", return_value="ffmpeg"), \
+        mock.patch("subprocess.run", return_value=NS(returncode=0, stdout=b"\xff\xd8jpeg", stderr=b"")):
+    ok, out = remote.run_job({"id": 4, "kind": "snapshot", "payload": {"host": "172.16.20.113",
+                              "rtsp_url": "rtsp://172.16.20.113:554/live"}, "secret": secret_login})
+assert ok and out["jpeg"]
+# keeping the setup for later: the login encrypted where it can be (Windows/Linux key)
+with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir", return_value=Path(d)), \
+        mock.patch("camagent.secret.protect", side_effect=lambda v: "sealed:" + v[::-1]):
+    ok, out = remote.run_job({"id": 5, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "abc123",
+                              "rtsp_url": "rtsp://172.16.20.113:554/live", "ptz": True, "token": "p0"},
+                              "secret": secret_login})
+    saved = json.loads((Path(d) / "pending" / "abc123.json").read_text())
+assert ok and saved["username"] == "yonderview" and saved["password"].startswith("sealed:") and saved["ptz"]
+ok, out = remote.run_job({"id": 6, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "../x"},
+                          "secret": secret_login})
+assert not ok and "bad setup" in out
+print("v0.18 phase 2 OK")
