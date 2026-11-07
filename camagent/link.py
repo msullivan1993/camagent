@@ -188,6 +188,24 @@ def connect(site, token, slug, replace=False):
                                      "Try again in a minute.")
 
 
+def checkin(site, token, info):
+    """Website setup (0.18): tell the website this computer is here; returns {"jobs": [...], "next_s": n}."""
+    status, d = _call(site, "POST", "/api/agent/checkin", {"info": info}, token=token, timeout=25)
+    if status == 401:
+        raise NotSignedIn(SIGNED_OUT)
+    if status != 200:
+        raise LinkError(f"YonderView answered {status}")
+    return d if isinstance(d, dict) else {}
+
+
+def job_result(site, token, job_id, ok, out):
+    body = {"ok": True, "result": out} if ok else {"ok": False, "error": str(out)[:300]}
+    status, _ = _call(site, "POST", f"/api/agent/jobs/{int(job_id)}", body, token=token)
+    if status == 401:
+        raise NotSignedIn(SIGNED_OUT)
+    return status == 200
+
+
 def sign_out(site, token):
     """Revoke this computer's token on the website. True if it's revoked (or already wasn't valid); False if the
     website couldn't be reached or said something else (the caller still forgets the token here)."""

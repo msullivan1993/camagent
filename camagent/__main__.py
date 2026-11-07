@@ -59,6 +59,7 @@ def main(argv=None):
     g = sub.add_parser("gpu-test", help="compare ways this PC's graphics chip can make a camera's versions (15 s each)")
     g.add_argument("camera", nargs="?")
     sub.add_parser("box-setup", help="Linux box that only runs CamAgent: write less to its flash storage (asks first)")
+    sub.add_parser("remote", help=argparse.SUPPRESS)       # the website setup helper (runs in the background)
     sub.add_parser("version", help="show which version of CamAgent is installed")
 
     # allow --config after the subcommand too
@@ -131,6 +132,10 @@ def main(argv=None):
         logging.basicConfig(level=logging.ERROR)
         from .doctor import run
         sys.exit(run(cfg_path, args.camera))
+
+    elif args.cmd == "remote":
+        from .remote import main as remote_main
+        sys.exit(remote_main(cfg_path))
 
     elif args.cmd == "box-setup":
         from .storage import run

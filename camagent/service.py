@@ -285,6 +285,10 @@ def install(config_path=None):
     from .config import load_or_defaults
     if load_or_defaults(config_path)["update"].get("auto", True) and not update_schedule_installed():
         install_update_schedule(config_path)
+    try:
+        install_remote(config_path)            # 0.18: website setup helper (idles until the computer is linked)
+    except Exception:  # noqa: BLE001 - never stop an install over the beta helper
+        pass
 
 
 def uninstall():
@@ -300,6 +304,8 @@ def uninstall():
         _run(["systemctl", "daemon-reload"], check=False)
     if update_schedule_installed():
         remove_update_schedule()
+    if remote_installed():
+        remove_remote()
     print("CamAgent no longer runs in the background, so no camera is being sent from this computer.")
 
 
@@ -338,6 +344,11 @@ def refresh_unit(config_path=None):
         except Exception:  # noqa: BLE001 - never stop an update over this; the next save encrypts them anyway
             pass
         _ensure_update_now(config_path)
+        if not remote_installed():
+            try:
+                install_remote(config_path)    # 0.18: after an update from before, add the website setup helper
+            except Exception:  # noqa: BLE001
+                pass
         exe, xml = _win_paths()
         xml.write_text(_win_xml(Path(config_path or default_config_path())), encoding="utf-8")
         _win_apply_account(config_path)
@@ -345,6 +356,11 @@ def refresh_unit(config_path=None):
     if not UNIT_PATH.exists():
         return
     _linux_seal(config_path)
+    if not remote_installed():
+        try:
+            install_remote(config_path)        # 0.18: after an update from before, add the website setup helper
+        except Exception:  # noqa: BLE001
+            pass
     UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
     _run(["systemctl", "daemon-reload"], check=False)
     _ensure_update_now(config_path)
@@ -477,3 +493,86 @@ def remove_update_schedule():
         NOW_SERVICE_PATH.unlink(missing_ok=True)
         _run(["systemctl", "daemon-reload"], check=False)
     print("Automatic updates: off.")
+
+
+# ---------- website setup helper (0.18, beta): camagent remote ----------
+REMOTE_TASK = "camagent remote"
+REMOTE_UNIT = Path("/etc/systemd/system/camagent-remote.service")
+_REMOTE_XML = """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>CamAgent website setup helper (yonderview.net)</Description></RegistrationInfo>
+  <Triggers>
+    <BootTrigger><Enabled>true</Enabled></BootTrigger>
+    <TimeTrigger><StartBoundary>2026-01-01T00:00:00</StartBoundary><Enabled>true</Enabled>
+      <Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition></TimeTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><UserId>S-1-5-18</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{python}</Command><Arguments>{args}</Arguments></Exec></Actions>
+</Task>
+"""
+
+
+def install_remote(config_path=None):
+    """The helper that lets the website set cameras up (camagent remote): Windows, a SYSTEM task at startup that's
+    re-checked every 5 minutes (no time limit; one copy at a time); Linux, a root service that restarts by itself."""
+    from xml.sax.saxutils import escape
+    config_path = Path(config_path or default_config_path())
+    if os.name == "nt":
+        import tempfile
+        xml = _REMOTE_XML.format(python=escape(sys.executable),
+                                 args=escape(f'-I -m camagent remote --config "{config_path}"'))
+        fd, path = tempfile.mkstemp(suffix=".xml")
+        os.close(fd)
+        try:
+            Path(path).write_text(xml, encoding="utf-16")
+            _run(["schtasks", "/Create", "/TN", REMOTE_TASK, "/XML", path, "/F"], check=False)
+        finally:
+            Path(path).unlink(missing_ok=True)
+        _run(["schtasks", "/Run", "/TN", REMOTE_TASK], check=False)
+        return
+    REMOTE_UNIT.write_text(f"""[Unit]
+Description=camagent website setup helper (yonderview.net)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart={sys.executable} -I -m camagent remote --config {config_path}
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
+""", encoding="utf-8")
+    _run(["systemctl", "daemon-reload"], check=False)
+    _run(["systemctl", "enable", "--now", "camagent-remote.service"], check=False)
+
+
+def remote_installed() -> bool:
+    if os.name == "nt":
+        return subprocess.run(["schtasks", "/Query", "/TN", REMOTE_TASK], capture_output=True).returncode == 0
+    return REMOTE_UNIT.exists()
+
+
+def remove_remote():
+    if os.name == "nt":
+        _run(["schtasks", "/End", "/TN", REMOTE_TASK], check=False)
+        _run(["schtasks", "/Delete", "/TN", REMOTE_TASK, "/F"], check=False)
+        return
+    _run(["systemctl", "disable", "--now", "camagent-remote.service"], check=False)
+    REMOTE_UNIT.unlink(missing_ok=True)
+    _run(["systemctl", "daemon-reload"], check=False)
