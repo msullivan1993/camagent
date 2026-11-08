@@ -84,12 +84,13 @@ def _download(url, api_url="", sleep=None):
     """A release file: from its normal download address, else the same file through GitHub's API (on 2026-11-08
     the download addresses answered 504 for an hour while the API served the files). The signature check that
     follows is what makes a file trustworthy, whichever address it came from."""
+    extra = {"sleep": sleep} if sleep else {}
     try:
-        return _get(url, sleep=sleep)
+        return _get(url, **extra)
     except DownloadFailed:
         if not api_url.startswith("https://api.github.com/"):
             raise
-        return _get(api_url, sleep=sleep)
+        return _get(api_url, **extra)
 
 
 def verify_sums(sums: bytes, sig: bytes, keys=None) -> bool:
