@@ -57,8 +57,21 @@ def _error_line(text):
     lines = [ln.strip() for ln in text.splitlines() if ln.strip() and "frame=" not in ln
              and not ln.strip().startswith("bench:")]
     useful = [ln for ln in lines if ln != "Conversion failed!" and re.search(
-        r"error|fail|not supported|invalid|unable|cannot|could not|no such", ln, re.I)]
+        r"error|fail|not supported|invalid|unable|cannot|could not|no such|terminat|not found|denied", ln, re.I)]
     return (useful or lines or ["no output"])[-1]
+
+
+def _save_output(name, text, n):
+    """Keep ffmpeg's whole answer for a way that failed, so support can see exactly why. The camera's address is
+    removed. Returns the file's path, or ""."""
+    try:
+        folder = config.base_dir() / "logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"gpu-test-{n}.txt"
+        path.write_text(f"{name}\n\n" + config.scrub(text)[-20000:], encoding="utf-8")
+        return str(path)
+    except OSError:
+        return ""
 
 
 def command(ffmpeg, url, pre, chain, enc, outputs=OUTPUTS):
@@ -110,7 +123,7 @@ def run(config_path=None, camera_id=None):
           f"in {len(tests)} ways ({cores} processor threads).\n"
           "Optional: watch the GPU (graphics chip) in Task Manager while it runs.\n")
     results = []
-    for name, pre, chain, enc in tests:
+    for n, (name, pre, chain, enc) in enumerate(tests, 1):
         print(f"- {name}: ", end="", flush=True)
         t0 = time.monotonic()
         try:
@@ -122,7 +135,11 @@ def run(config_path=None, camera_id=None):
             continue
         speed, cpu_s, wall = parse(text)
         if r.returncode or speed is None:
-            print("doesn't work here: " + config.scrub(_error_line(text))[:160])
+            saved = _save_output(name, text, n)
+            print(f"doesn't work here (ffmpeg stopped with code {r.returncode}): "
+                  + config.scrub(_error_line(text))[:160])
+            if saved:
+                print(f"    ffmpeg's full answer is in {saved}")
             continue
         share = round(100 * cpu_s / (wall * cores)) if cpu_s and wall else None
         results.append((name, speed, share))
