@@ -31,12 +31,42 @@ def ways(method):
     ]
 
 
-def command(ffmpeg, url, pre, chain, enc):
-    graph = [f"[0:v]split={len(OUTPUTS)}" + "".join(f"[s{i}]" for i in range(len(OUTPUTS)))]
-    graph += [f"[s{i}]{chain(h)}[o{i}]" for i, (h, _) in enumerate(OUTPUTS)]
+def outputs_for(source_height):
+    """The versions CamAgent really makes for this camera: 720p and 480p, plus 1080p only when it sends more."""
+    return tuple(o for o in OUTPUTS if o[0] <= 720 or (source_height and source_height > o[0]))
+
+
+def _camera_height(ffmpeg, url):
+    """The camera's picture height right now (its setting may have changed since setup), or 0."""
+    import json
+    from .camera import find_ffprobe
+    ffprobe = find_ffprobe(ffmpeg)
+    if not ffprobe:
+        return 0
+    try:
+        r = subprocess.run([ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
+                            "-show_entries", "stream=height", "-of", "json", url],
+                           capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+        return int(((json.loads(r.stdout or "{}").get("streams") or [{}])[0]).get("height") or 0)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return 0
+
+
+def _error_line(text):
+    """The line that says what went wrong (not ffmpeg's timing line or its generic last words)."""
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip() and "frame=" not in ln
+             and not ln.strip().startswith("bench:")]
+    useful = [ln for ln in lines if ln != "Conversion failed!" and re.search(
+        r"error|fail|not supported|invalid|unable|cannot|could not|no such", ln, re.I)]
+    return (useful or lines or ["no output"])[-1]
+
+
+def command(ffmpeg, url, pre, chain, enc, outputs=OUTPUTS):
+    graph = [f"[0:v]split={len(outputs)}" + "".join(f"[s{i}]" for i in range(len(outputs)))]
+    graph += [f"[s{i}]{chain(h)}[o{i}]" for i, (h, _) in enumerate(outputs)]
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "info", "-benchmark", "-stats",
            "-rtsp_transport", "tcp", *pre, "-t", str(SECONDS), "-i", url, "-filter_complex", ";".join(graph)]
-    for i, (_, rate) in enumerate(OUTPUTS):
+    for i, (_, rate) in enumerate(outputs):
         cmd += ["-map", f"[o{i}]", *enc, "-b:v", rate, "-f", "null", "-"]
     return cmd
 
@@ -71,9 +101,12 @@ def run(config_path=None, camera_id=None):
         return 0
     url = config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])
     cores = os.cpu_count() or 1
+    height = _camera_height(ffmpeg, url)
+    outputs = outputs_for(height)
+    sizes = ", ".join(f"{h}p" for h, _ in outputs)
     print("This test checks how well this computer makes the smaller copies of your camera's video (720p and 480p).")
     print("It takes about a minute, and this computer works hard while it runs. Nothing is sent anywhere.")
-    print(f"Camera {cfg['platform'].get('camera_id')}: CamAgent makes 1080p, 720p and 480p for {SECONDS} seconds, "
+    print(f"Camera {cfg['platform'].get('camera_id')} ({height or '?'}p): CamAgent makes {sizes} for {SECONDS} seconds, "
           f"in {len(tests)} ways ({cores} processor threads).\n"
           "Optional: watch the GPU (graphics chip) in Task Manager while it runs.\n")
     results = []
@@ -81,7 +114,7 @@ def run(config_path=None, camera_id=None):
         print(f"- {name}: ", end="", flush=True)
         t0 = time.monotonic()
         try:
-            r = subprocess.run(command(ffmpeg, url, pre, chain, enc), capture_output=True, text=True,
+            r = subprocess.run(command(ffmpeg, url, pre, chain, enc, outputs), capture_output=True, text=True,
                                timeout=SECONDS + 60, stdin=subprocess.DEVNULL)
             text = (r.stdout or "") + (r.stderr or "")
         except subprocess.TimeoutExpired:
@@ -89,8 +122,7 @@ def run(config_path=None, camera_id=None):
             continue
         speed, cpu_s, wall = parse(text)
         if r.returncode or speed is None:
-            last = [ln for ln in text.splitlines() if ln.strip() and "frame=" not in ln][-1:] or ["no output"]
-            print("doesn't work here: " + config.scrub(last[0])[:160])
+            print("doesn't work here: " + config.scrub(_error_line(text))[:160])
             continue
         share = round(100 * cpu_s / (wall * cores)) if cpu_s and wall else None
         results.append((name, speed, share))

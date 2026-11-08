@@ -240,3 +240,11 @@ for codec, height, expect in (("h264", 1080, None), ("h264", 2160, "amf"), ("hev
                                                                           return_value="ffprobe"):
         assert _up.convert_method() == expect, (codec, height)
 print("v0.21.2 no converting when the camera already fits OK")
+
+# ---- 0.21.3: gpu-test makes what CamAgent really makes, and shows the real error ----
+from camagent import gputest as _g  # noqa: E402
+assert _g.outputs_for(1080) == ((720, "2000k"), (480, "900k"))
+assert _g.outputs_for(2160)[0][0] == 1080
+assert _g._error_line("x\n[scale_d3d11] Failed to create device\nConversion failed!\nbench: maxrss=1KiB\n") \
+    == "[scale_d3d11] Failed to create device"
+print("v0.21.3 gpu-test sizes and errors OK")
