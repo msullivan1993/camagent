@@ -155,24 +155,24 @@ class CameraAgent:
         req = None
         try:
             if len(msg.payload) > MAX_COMMAND_BYTES:
-                raise RuntimeError("command too big; ignored")
+                raise RuntimeError("CamAgent ignored the command because it is too big")
             cmd = json.loads(msg.payload)
             if not isinstance(cmd, dict):
-                raise RuntimeError("not a command; ignored")
+                raise RuntimeError("CamAgent ignored a message that isn't a command")
             req = cmd.get("req")
             if req is not None and not isinstance(req, (str, int)):
                 req = None
-                raise RuntimeError("bad command id; ignored")
+                raise RuntimeError("CamAgent ignored a command with a bad ID")
             ts = cmd.get("ts")
             if not isinstance(ts, (int, float)) or isinstance(ts, bool):
-                raise RuntimeError("command without a time; ignored")      # the website always sends one
+                raise RuntimeError("CamAgent ignored a command that has no time")      # the website always sends one
             age = time.time() - float(ts)
             if age > float(self.cfg["agent"].get("stale_command_s", 5)):
-                raise RuntimeError("command too old; ignored")
+                raise RuntimeError("CamAgent ignored the command because it is too old")
             # a little "from the future" is fine (this PC's clock may be behind); a lot isn't (0.17: a command
             # saved and replayed later would otherwise pass the age check)
             if age < -FUTURE_COMMAND_S:
-                raise RuntimeError("command dated in the future (check this computer's clock); ignored")
+                raise RuntimeError("CamAgent ignored a command dated in the future. Check this computer's clock")
             if self._replayed(req):
                 self.log.info("command %s already done; ignored a repeat", str(req)[:40])
                 return
@@ -232,7 +232,7 @@ class CameraAgent:
             return tools.request_update()
         # the checks take up to a minute: answer now, send the report when it's done (with the telemetry)
         if not tools.DOCTOR.acquire(blocking=False):
-            return {"started": False, "error": "the checks are already running; try again in a minute"}
+            return {"started": False, "error": "The checks are already running. Try again in a minute."}
 
         def checks():
             try:
@@ -257,12 +257,12 @@ class CameraAgent:
             return self._control(op, cmd)
         if op == "versions":                    # the website wants lower-quality versions made here (or not)
             if not self.versions:
-                return {"ok": False, "error": "versions are off on this PC"}
+                return {"ok": False, "error": "Lower-quality versions are off on this computer"}
             if cmd.get("on"):
                 return self.versions.want(cmd.get("versions") or [], cmd.get("mark"), cmd.get("keep_s", 180))
             return self.versions.stop()
         if not self.ptz:
-            raise RuntimeError("PTZ is disabled for this camera")
+            raise RuntimeError("Turn and zoom (PTZ) is turned off for this camera")
         if op == "move":
             return self.ptz.move(cmd.get("pan", 0), cmd.get("tilt", 0), cmd.get("zoom", 0), cmd.get("ms", 400))
         if op == "stop":
@@ -282,7 +282,7 @@ class CameraAgent:
     def _control(self, op, cmd):
         c = self.controls
         if not c:
-            raise RuntimeError("this camera has no ONVIF controls set up")
+            raise RuntimeError("CamAgent has no ONVIF controls set up for this camera")
         if op == "focus":
             return c.focus(cmd.get("dir", "stop"), cmd.get("ms", 600))
         if op == "autofocus":
@@ -419,11 +419,11 @@ class CameraAgent:
         if self.position_kind == "fake":
             commanded = getattr(self.ptz, "commanded", None)
             if not isinstance(commanded, dict):
-                raise RuntimeError("this camera doesn't report where it points")
+                raise RuntimeError("This camera doesn't report where it points")
             return dict(commanded, commanded=True)
         pos = self.ptz.position()
         if pos is None:
-            raise RuntimeError("the camera didn't say where it points")
+            raise RuntimeError("This camera didn't say where it points")
         self._note_position(pos)
         return dict(pos, fresh=True)
 
@@ -568,7 +568,7 @@ class Supervisor:
             except ValueError as e:
                 log.error("camera '%s' not started: %s (fix with: camagent configure %s)", cid, e, cid)
         if not self.agents:
-            raise SystemExit("No cameras are configured. Add one with: camagent add")
+            raise SystemExit("You haven't set up any cameras. To add one, type: camagent add")
         self.stopping = threading.Event()
         self.started = time.time()
 

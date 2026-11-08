@@ -82,7 +82,7 @@ try:
     link.cameras("http://127.0.0.1:9", "x")                                    # nothing listening: plain words
     raise AssertionError("expected LinkError")
 except link.LinkError as e:
-    assert "Couldn't reach" in str(e)
+    assert "couldn't reach" in str(e)
 
 # 2. Setting a camera up by signing in: Server step -> sign in -> pick the camera -> confirm -> saved
 d = Path(tempfile.mkdtemp()); main = d / "camagent.toml"

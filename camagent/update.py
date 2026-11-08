@@ -123,31 +123,34 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False, if_req
     cfg = config.load_or_defaults(config_path)
     repo = cfg["update"]["repo"]
     if "OWNER" in repo:
-        raise SystemExit("Set [update] repo in the config to your repository URL first.")
+        raise SystemExit("CamAgent doesn't know where to find updates. Only do this if YonderView support asks you to: "
+                         "set [update] repo in CamAgent's config file to the repository address support gives you.")
 
     if not auto:
         asked = ref or cfg["update"].get("ref")
         ref = asked or latest_release(repo)
         if not ref:
-            raise SystemExit("Couldn't check for a new version (GitHub, where CamAgent's releases are kept, didn't answer). "
-                             "Check this computer's internet connection and try again in a few minutes.")
+            raise SystemExit("CamAgent couldn't check for a new version. GitHub, where CamAgent's releases are kept, "
+                             "didn't answer. Check this computer's internet connection and try again in a few minutes.")
         if re.fullmatch(r"\d+\.\d+\.\d+", ref):
             ref = "v" + ref                          # "0.16.1" means the release v0.16.1
         if not asked and not unsigned and version_tuple(ref) < version_tuple(__version__):
             # "latest" older than what's installed: someone may be trying to push an old version. Only on request.
-            raise SystemExit(f"The latest release ({ref}) is older than this one ({__version__}); not going back. "
-                             f"To install it anyway: camagent update --ref {ref}")
+            raise SystemExit(f"The latest release ({ref}) is older than the one you have ({__version__}), so CamAgent "
+                             f"is not going back. To install it anyway, type: camagent update --ref {ref}")
         if unsigned:
-            print(f"Installing CamAgent from {ref} ({repo}) WITHOUT checking its signature (--unsigned, for testing only)...")
+            print(f"CamAgent is installing {ref} from {repo} WITHOUT checking that YonderView published it.")
+            print("(You used --unsigned. Only do this if YonderView support asked you to.)")
             print(f"Installed: {_install_unsigned(repo, ref)}")
         else:
-            print(f"Updating CamAgent from {__version__} to {ref} (checking it's an official, signed release)...")
+            print(f"CamAgent is updating from {__version__} to {ref}. It checks first that this is an official, "
+                  "signed release...")
             try:
                 print(f"Installed: {_install(repo, ref)}")
             except NotSigned as e:
-                raise SystemExit(f"Not installed: {e}.\nFor your safety, CamAgent only installs releases signed with YonderView's "
-                                 f"release key; this computer is unchanged. (For testing a branch: camagent update "
-                                 f"--ref <branch> --unsigned)")
+                raise SystemExit(f"Not installed: {e}.\nFor your safety, CamAgent only installs releases signed with "
+                                 f"YonderView's release key. Nothing on this computer changed. Only if YonderView "
+                                 f"support asks you to test a branch, type: camagent update --ref <branch> --unsigned")
         _refresh_unit(config_path)
         service.restart()
         # computers set up before automatic updates existed get them now (on by default; off in the menu)

@@ -1,19 +1,19 @@
 """camagent command line. Run `camagent` on its own for a menu.
 
-  camagent add                set up another camera on this computer
-  camagent configure [CAM]    change a camera's settings (or set up the first one)
-  camagent list               every camera here, with live status
+  camagent add                add another camera on this computer
+  camagent configure [CAM]    change a camera's settings (or add your first camera)
+  camagent list               show every camera here and how it's doing
   camagent remove [CAM]       stop sending a camera from this computer
-  camagent run                run the agent in the foreground (what the service runs)
-  camagent discover           list ONVIF cameras on the network
-  camagent signin             sign this computer in to your YonderView account
-  camagent signout            forget this computer's YonderView sign-in
-  camagent doctor [CAM]       check everything the agent needs, with fixes
-  camagent gpu-test [CAM]     compare ways the graphics chip can make a camera's versions
-  camagent install-service    install and start the system service
-  camagent uninstall-service  remove the system service
-  camagent restart            restart the service
-  camagent update             install the latest signed release and restart
+  camagent run                run CamAgent in this window (what the background service runs)
+  camagent discover           search the network for cameras that answer to ONVIF
+  camagent signin             sign in to your YonderView account on this computer
+  camagent signout            sign out of YonderView on this computer
+  camagent doctor [CAM]       check everything CamAgent needs, and say how to fix problems
+  camagent gpu-test [CAM]     compare ways the graphics chip can make a camera's lower qualities
+  camagent install-service    install CamAgent as a background service and start it
+  camagent uninstall-service  remove the background service
+  camagent restart            restart the background service
+  camagent update             install the latest signed release and restart CamAgent
   camagent version
 """
 import argparse
@@ -24,19 +24,20 @@ from . import __version__
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="camagent", description="CamAgent sends your cameras to YonderView. Run it with no command for the menu.")
-    ap.add_argument("--config", help="path to camagent.toml (default: the standard location)")
+    ap = argparse.ArgumentParser(prog="camagent", description="CamAgent sends your cameras to YonderView. "
+                                 "Run camagent with no command to see the menu.")
+    ap.add_argument("--config", help="path to camagent.toml (default: the usual place)")
     sub = ap.add_subparsers(dest="cmd")
-    sub.add_parser("run", help="run CamAgent in this window (for testing; normally it runs in the background)")
-    sub.add_parser("add", help="set up a camera")
+    sub.add_parser("run", help="run CamAgent in this window (for testing; normally CamAgent runs in the background)")
+    sub.add_parser("add", help="add a camera")
     p = sub.add_parser("configure", help="change a camera's settings")
     p.add_argument("camera", nargs="?")
-    sub.add_parser("list", help="show the cameras on this computer and how they're doing")
+    sub.add_parser("list", help="show your cameras on this computer and how they're doing")
     p = sub.add_parser("remove", help="remove a camera from this computer")
     p.add_argument("camera", nargs="?")
     sub.add_parser("discover", help="search the network for cameras")
-    sub.add_parser("signin", help="sign this computer in to your YonderView account (shows a code)")
-    sub.add_parser("signout", help="forget this computer's YonderView sign-in")
+    sub.add_parser("signin", help="sign in to your YonderView account on this computer (shows a code)")
+    sub.add_parser("signout", help="sign out of YonderView on this computer")
     p = sub.add_parser("doctor", help="check for problems")
     p.add_argument("camera", nargs="?")
     sub.add_parser("install-service", help="start CamAgent in the background (and with the computer)")
@@ -45,20 +46,22 @@ def main(argv=None):
     up = sub.add_parser("update", help="update CamAgent now and restart it")
     up.add_argument("--ref", help="release tag to install (default: the latest release)")
     up.add_argument("--unsigned", action="store_true",
-                    help="install --ref (e.g. a branch) straight from git without checking a signature (testing only)")
-    up.add_argument("--auto", action="store_true", help="scheduled run: install only a newer release, verify, roll back if needed")
+                    help="install --ref (for example a branch) straight from git without checking a signature "
+                         "(testing only)")
+    up.add_argument("--auto", action="store_true",
+                    help="scheduled run: install only a newer release, check it, and go back to the old one if needed")
     up.add_argument("--jitter", type=int, default=0, help=argparse.SUPPRESS)
     up.add_argument("--if-requested", action="store_true", help=argparse.SUPPRESS)
-    w = sub.add_parser("weather", help="add, change or remove a camera's local weather station (beta)")
+    w = sub.add_parser("weather", help="add, change or remove a camera's weather station (beta)")
     w.add_argument("camera", nargs="?")
     pr = sub.add_parser("probe", help="show what a camera can do (focus, day/night, wiper...)")
     pr.add_argument("camera", nargs="?")
-    pr.add_argument("--test-moves", action="store_true", help="also check that absolute moves work (turns the camera)")
-    fx = sub.add_parser("fix-stream", help="set a camera's video to what YonderView needs: H.264, up to 1080p, a keyframe every 2 s (asks first)")
-    fx.add_argument("camera", nargs="?")
-    g = sub.add_parser("gpu-test", help="compare ways this PC's graphics chip can make a camera's versions (15 s each)")
+    pr.add_argument("--test-moves", action="store_true", help="also check that exact moves work (turns the camera)")
+    g = sub.add_parser("gpu-test", help="compare ways this computer's graphics chip can make a camera's "
+                                       "lower qualities (15 seconds each)")
     g.add_argument("camera", nargs="?")
-    sub.add_parser("box-setup", help="Linux box that only runs CamAgent: write less to its flash storage (asks first)")
+    sub.add_parser("box-setup", help="for a Linux computer that only runs CamAgent: write less to its flash "
+                                          "storage (asks first)")
     sub.add_parser("remote", help=argparse.SUPPRESS)       # the website setup helper (runs in the background)
     sub.add_parser("version", help="show which version of CamAgent is installed")
 
@@ -99,7 +102,7 @@ def main(argv=None):
             else:
                 configure.remove(cfg_path, args.camera)
         except (KeyboardInterrupt, EOFError):
-            print("\nCancelled. Nothing was saved.")
+            print("\nCanceled. Nothing was saved.")
 
     elif args.cmd in ("signin", "signout"):
         from . import configure, link
@@ -109,11 +112,11 @@ def main(argv=None):
             else:
                 site, token, name = configure.account_token(cfg_path)
                 if token:
-                    print(f"Signed in as {name or 'your account'}. Set a camera up with: camagent add")
+                    print(f"You're signed in as {name or 'your account'}. To add a camera, type: camagent add")
         except link.LinkError as e:
             raise SystemExit(str(e))
         except (KeyboardInterrupt, EOFError):
-            print("\nCancelled. Nothing was changed.")
+            print("\nCanceled. Nothing was changed.")
 
     elif args.cmd == "list":
         from .configure import list_cameras
@@ -123,8 +126,9 @@ def main(argv=None):
         from .camera import discover
         cams = discover()
         if not cams:
-            print("No cameras answered. Check that the camera is on, on the same network as this computer, and has")
-            print("ONVIF turned on in its web page (ONVIF is the standard way CamAgent talks to cameras).")
+            print("No cameras answered. Check that your camera is on and is on the same network as this computer.")
+            print("Also check that ONVIF is turned on in the camera's web page. (ONVIF is the camera's control and")
+            print("setup standard. CamAgent uses it to talk to your camera.)")
         for c in cams:
             print(f"{c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip())
 
@@ -156,10 +160,6 @@ def main(argv=None):
     elif args.cmd == "restart":
         from .service import restart
         restart()
-
-    elif args.cmd == "fix-stream":
-        from .controls import cli_fix_stream
-        cli_fix_stream(cfg_path, args.camera)
 
     elif args.cmd == "probe":
         from .controls import cli_probe

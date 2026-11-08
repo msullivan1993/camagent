@@ -48,8 +48,9 @@ def wear_notice(root="/sys/block"):
     for w in emmc_wear(root):
         if (w["eol"] or 1) >= 0x02 or w["used_pct"] >= WARN_LIFE * 10:
             when = "now" if (w["eol"] or 1) >= 0x03 or w["used_pct"] > 100 else "soon"
-            return (f"this computer's built-in storage ({w['device']}) is about {min(w['used_pct'], 100)}% worn; plan "
-                    f"to replace the computer {when} (a spare set up with CamAgent takes a few minutes to swap in)")
+            return (f"This computer's built-in storage ({w['device']}) is about {min(w['used_pct'], 100)}% worn out. "
+                    f"Plan to replace the computer {when}. Tip: keep a spare computer set up with CamAgent; "
+                    "swapping it in takes a few minutes")
     return ""
 
 
@@ -77,7 +78,8 @@ def plan():
     if not Path(JOURNALD).exists():
         steps.append(("keep the system log (CamAgent's included) in memory, capped at 64 MB", _journal))
     if swap_files():
-        steps.append((f"turn off swap on the storage ({', '.join(swap_files())}); memory swap (zram) is kept", _swap))
+        steps.append((f"turn off the swap file on the storage ({', '.join(swap_files())}). Swap is space the computer uses as "
+                      "extra memory, and it wears the storage out. Memory swap (zram) isn't touched", _swap))
     if not _tmp_in_memory():
         steps.append(("put /tmp in memory", _tmp))
     return steps
@@ -123,26 +125,28 @@ def _tmp():
 def run():
     """`camagent box-setup`: Linux only, as root, after asking."""
     if os.name == "nt":
-        print("box-setup is for Linux boxes (a Raspberry Pi, a Rockchip box). Windows PCs don't need it.")
+        print("box-setup is for Linux computers like a Raspberry Pi or a Rockchip box.")
+        print("Windows computers don't need it.")
         return 0
     if os.geteuid() != 0:
-        print("Run it as root: sudo camagent box-setup")
+        print("box-setup needs administrator rights. On Linux, type sudo in front: sudo camagent box-setup")
         return 1
     for w in emmc_wear():
-        print(f"Built-in storage {w['device']}: about {min(w['used_pct'], 100)}% of its rated life used.")
+        print(f"Built-in storage {w['device']}: about {min(w['used_pct'], 100)}% of its rated life is used.")
     steps = plan()
     if not steps:
-        print("Nothing to change: this box already writes as little as it can.")
+        print("Nothing to change. Your computer already writes as little as it can to its storage.")
         return 0
-    print("For a box that only runs CamAgent, this saves its flash storage by writing less to it:")
+    print("box-setup is for a computer that only runs CamAgent. box-setup saves the flash storage by writing less to it.")
+    print("CamAgent would make these changes:")
     for text, _ in steps:
         print(f"  - {text}")
-    print("Don't use it on a computer you use for other things (the system log won't survive a restart).")
+    print("Don't use this on a computer you use for other things. The system log won't survive a restart.")
     if input("Make these changes? (y/N): ").strip().lower() not in ("y", "yes"):
-        print("Nothing changed.")
+        print("CamAgent changed nothing.")
         return 0
     for text, fn in steps:
         fn()
-        print(f"  done: {text}")
-    print("Done. A restart (sudo reboot) makes sure everything takes effect.")
+        print(f"  Done: {text}")
+    print("All done. Restart this computer to make sure everything takes effect (type: sudo reboot).")
     return 0

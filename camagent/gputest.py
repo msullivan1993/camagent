@@ -55,23 +55,27 @@ def run(config_path=None, camera_id=None):
     _, cams, _ = config.load_all(config_path or config.default_config_path())
     cams = [c for c in cams if not camera_id or c["platform"].get("camera_id") == camera_id]
     if not cams:
-        print("That camera isn't set up on this computer." if camera_id else "No cameras are set up on this computer.")
+        print("That camera isn't set up on this computer." if camera_id else
+              "You haven't set up any cameras on this computer.")
         return 1
     cfg = cams[0]
     cam, s = cfg["camera"], cfg["stream"]
     ffmpeg = find_ffmpeg(s.get("ffmpeg", ""))
     if not ffmpeg:
-        print("ffmpeg isn't installed.")
+        print("ffmpeg isn't installed on this computer.")
         return 1
     method = s.get("encoder") or ""
     tests = ways(method)
     if not tests:
-        print(f"Nothing to compare for this camera's encoder ({method or 'none set'}); the test is for AMD graphics.")
+        print(f"Nothing to compare for your camera's encoder ({method or 'none set'}). This test is for AMD graphics.")
         return 0
     url = config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])
     cores = os.cpu_count() or 1
-    print(f"Camera {cfg['platform'].get('camera_id')}: making 1080p, 720p and 480p for {SECONDS} seconds, "
-          f"{len(tests)} ways ({cores} processor threads). Watch Task Manager's GPU while it runs.\n")
+    print("This test checks how well this computer makes the smaller copies of your camera's video (720p and 480p).")
+    print("It takes about a minute, and this computer works hard while it runs. Nothing is sent anywhere.")
+    print(f"Camera {cfg['platform'].get('camera_id')}: CamAgent makes 1080p, 720p and 480p for {SECONDS} seconds, "
+          f"in {len(tests)} ways ({cores} processor threads).\n"
+          "Optional: watch the GPU (graphics chip) in Task Manager while it runs.\n")
     results = []
     for name, pre, chain, enc in tests:
         print(f"- {name}: ", end="", flush=True)
@@ -81,7 +85,7 @@ def run(config_path=None, camera_id=None):
                                timeout=SECONDS + 60, stdin=subprocess.DEVNULL)
             text = (r.stdout or "") + (r.stderr or "")
         except subprocess.TimeoutExpired:
-            print("didn't finish (stopped)")
+            print("didn't finish, so CamAgent stopped it")
             continue
         speed, cpu_s, wall = parse(text)
         if r.returncode or speed is None:
@@ -90,13 +94,13 @@ def run(config_path=None, camera_id=None):
             continue
         share = round(100 * cpu_s / (wall * cores)) if cpu_s and wall else None
         results.append((name, speed, share))
-        print(f"speed {speed:.2f}x, processor {share if share is not None else '?'}% of this PC "
+        print(f"speed {speed:.2f}x, processor {share if share is not None else '?'}% of this computer "
               f"({time.monotonic() - t0:.0f} s)")
     print()
     good = [r for r in results if r[1] >= 0.97]
     if good:
         best = min(good, key=lambda r: r[2] if r[2] is not None else 999)
-        print(f"Lightest that keeps up: {best[0]} ({best[2]}% processor). Send these lines to YonderView support.")
+        print(f"Lightest way that keeps up: {best[0]} ({best[2]}% processor). Send these lines to YonderView support.")
     else:
         print("None of the ways kept up (speed under 1.0x). Send these lines to YonderView support.")
     return 0

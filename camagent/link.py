@@ -27,8 +27,8 @@ class NotSignedIn(LinkError):
     pass
 
 
-SIGNED_OUT = ("This computer is signed out of YonderView (it was unlinked on the website, or unused for 90 days). "
-              "Sign in again.")
+SIGNED_OUT = ("You're signed out of YonderView on this computer. Someone unlinked this computer on the website, or CamAgent "
+              "hasn't used the sign-in for 90 days. Sign in again.")
 
 
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -45,7 +45,7 @@ def _check_site(site):
     u = urlparse(site)
     local = u.hostname in ("localhost", "127.0.0.1", "::1")
     if u.scheme != "https" and not (u.scheme == "http" and local):
-        raise LinkError(f"The YonderView address must start with https:// (it's {site!r}).")
+        raise LinkError(f"The YonderView address must start with https:// (yours is {site!r}).")
 
 
 def _call(site, method, path, data=None, token=None, timeout=20):
@@ -67,7 +67,8 @@ def _call(site, method, path, data=None, token=None, timeout=20):
         status, raw = e.code, e.read()
     except (urllib.error.URLError, OSError) as e:
         reason = getattr(e, "reason", e)
-        raise LinkError(f"Couldn't reach {site} ({reason}). Check this computer's internet connection.") from None
+        raise LinkError(f"CamAgent couldn't reach {site} ({reason}). "
+                        "Check this computer's internet connection.") from None
     try:
         return status, json.loads(raw or b"{}")
     except ValueError:
@@ -102,10 +103,10 @@ def clock_problem(offset):
         return ""
     mins = abs(offset) // 60
     how = f"{mins // 60} h {mins % 60} min" if mins >= 60 else f"{mins} min"
-    fix = ("Settings > Time & language > Date & time > Sync now (or, in an administrator window: w32tm /resync)"
-           if os.name == "nt" else "sudo timedatectl set-ntp true")
-    return (f"this computer's clock is {how} {'behind' if offset > 0 else 'ahead'}, which breaks camera logins "
-            f"and recording times. Fix: {fix}")
+    fix = ("Settings > Time & language > Date & time > Sync now. Or open an administrator window and type: "
+           "w32tm /resync" if os.name == "nt" else "type sudo timedatectl set-ntp true")
+    return (f"This computer's clock is {how} {'behind' if offset > 0 else 'ahead'}. That breaks camera logins "
+            f"and recording times. To fix it: {fix}")
 
 
 def computer_name():
@@ -120,18 +121,21 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
     Ctrl+C stops waiting (KeyboardInterrupt goes to the caller)."""
     status, d = _call(site, "POST", "/api/agent/link/start", {"name": name or computer_name()})
     if status == 429:
-        raise LinkError(d.get("error") or "Too many sign-in attempts. Try again in a few minutes.")
+        raise LinkError(d.get("error") or "You've tried to sign in too many times. Try again in a few minutes.")
     if status != 200 or not d.get("device_code"):
-        raise LinkError(f"The sign-in couldn't start (YonderView answered {status}). Try again in a minute.")
+        raise LinkError(f"CamAgent couldn't start the sign-in (YonderView answered {status}). Try again in a minute.")
     show("")
-    show("  On your phone or another computer, open:")
+    show("  On your phone or another computer, open this address:")
     show(f"      {d['verification_uri']}")
-    show("  sign in to YonderView, and type this code:")
+    show("  Sign in to YonderView, then type this code:")
     show("")
     show(f"      {d['user_code']}")
     show("")
-    show(f"  (Or open this link, which fills in the code for you: {d.get('verification_uri_complete', d['verification_uri'])} )")
-    show(f"  Waiting for you to enter the code (it works for {int(d.get('expires_in') or 600) // 60} minutes; Ctrl+C cancels)...")
+    show("  Or open this link. It fills in the code for you:")
+    show(f"      {d.get('verification_uri_complete', d['verification_uri'])}")
+    show(f"  CamAgent is waiting for you to enter the code. The code works for "
+         f"{int(d.get('expires_in') or 600) // 60} minutes.")
+    show("  Press Ctrl+C to cancel.")
     interval = int(d.get("interval") or 5)
     deadline = time.monotonic() + int(d.get("expires_in") or 600)
     while time.monotonic() < deadline:
@@ -146,11 +150,12 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
             interval += 2
             continue
         if state == "denied":
-            raise LinkError("The sign-in was declined on the website, so this computer wasn't linked. Nothing changed.")
+            raise LinkError("You declined the sign-in on the website, so CamAgent didn't link this computer. "
+                            "Nothing changed.")
         if state == "expired":
             break
         raise LinkError(f"The sign-in stopped unexpectedly (YonderView answered {status}). Try again in a minute.")
-    raise LinkError("The code expired before it was approved. Start the sign-in again for a new code.")
+    raise LinkError("The code expired before you approved it. Start the sign-in again to get a new code.")
 
 
 def cameras(site, token):
@@ -161,7 +166,8 @@ def cameras(site, token):
     if status == 401:
         raise NotSignedIn(SIGNED_OUT)
     if status != 200:
-        raise LinkError(f"Couldn't get your cameras from YonderView (it answered {status}). Try again in a minute.")
+        raise LinkError(f"CamAgent couldn't get your cameras from YonderView (YonderView answered {status}). "
+                        "Try again in a minute.")
     cams = [c for c in d.get("cameras") or [] if isinstance(c, dict) and c.get("slug")]
     for c in cams:
         c["allowed"] = c.get("allowed") is not False
@@ -184,8 +190,8 @@ def connect(site, token, slug, replace=False):
         return "approve", url, str(d.get("error") or "")
     if status == 401:
         raise NotSignedIn(SIGNED_OUT)
-    raise LinkError(d.get("error") or f"Couldn't get the camera's connection settings (YonderView answered {status}). "
-                                     "Try again in a minute.")
+    raise LinkError(d.get("error") or f"CamAgent couldn't get the camera's connection settings (YonderView answered "
+                                     f"{status}). Try again in a minute.")
 
 
 def checkin(site, token, info):

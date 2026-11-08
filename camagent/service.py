@@ -35,9 +35,9 @@ def is_admin() -> bool:
 
 def _require_admin():
     if not is_admin():
-        hint = ("from an administrator Command Prompt or PowerShell (or the CamAgent shortcut in the Start menu)"
-                if os.name == "nt" else "with sudo in front (for example: sudo camagent)")
-        raise SystemExit(f"This needs administrator rights. Run it again {hint}.")
+        hint = ("from an administrator Command Prompt or PowerShell, or with the CamAgent shortcut in the Start menu"
+                if os.name == "nt" else "with sudo in front. For example, type: sudo camagent")
+        raise SystemExit(f"CamAgent needs administrator rights for this. Run it again {hint}.")
 
 
 def _run(cmd, check=True):
@@ -168,7 +168,7 @@ def windows_account(config_path=None):
 def _icacls(*args):
     r = subprocess.run(["icacls", *[str(a) for a in args]], capture_output=True, text=True)
     if r.returncode:
-        print(f"  (couldn't change the permissions of {args[0]}: {(r.stdout + r.stderr).strip()[-200:]})")
+        print(f"  (CamAgent couldn't change the permissions of {args[0]}: {(r.stdout + r.stderr).strip()[-200:]})")
     return r.returncode == 0
 
 
@@ -210,7 +210,7 @@ def _win_apply_account(config_path=None):
     name, sid, mode = windows_account(config_path)
     blocker = (unsafe_python() or ffmpeg_in_a_profile(_configured_ffmpeg(config_path))) if sid else ""
     if blocker:
-        print(f"  CamAgent stays on LocalSystem for now: {blocker}.")
+        print(f"  CamAgent stays on LocalSystem for now. {blocker}.")
         name, sid = WINDOWS_ACCOUNTS["system"], None
     if sid:
         _win_grant_access(sid)
@@ -218,7 +218,7 @@ def _win_apply_account(config_path=None):
     cmd = ["sc", "config", SERVICE, "obj=", name]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode:
-        print(f"  (couldn't set the account CamAgent runs as to {name}: {(r.stdout + r.stderr).strip()[-200:]})")
+        print(f"  (CamAgent couldn't set its account to {name}: {(r.stdout + r.stderr).strip()[-200:]})")
         return False
     if mode != "system":
         print(f"  CamAgent runs as {name} ([agent] windows_account = \"{mode}\" in camagent.toml).")
@@ -238,9 +238,9 @@ def _download_checked(url, sha256, dest):
     with urllib.request.urlopen(url, timeout=60) as r:
         data = r.read()
     if hashlib.sha256(data).hexdigest() != sha256:
-        raise SystemExit(f"The download from {url} isn't the expected file (its checksum differs), so it wasn't "
-                         "installed. Try again later; if it keeps happening, contact support (Report a problem on "
-                         "yonderview.net).")
+        raise SystemExit(f"The download from {url} isn't the expected file. Its checksum differs, so CamAgent "
+                         "didn't install it. Try again later. If this keeps happening, contact support (Report a "
+                         "problem on yonderview.net).")
     Path(dest).write_bytes(data)
 
 
@@ -250,8 +250,8 @@ def install(config_path=None):
     _require_admin()
     config_path = Path(config_path or default_config_path())
     if not config_path.exists():
-        raise SystemExit(f"No settings found at {config_path}, so there's nothing to start yet. Set up a camera first: "
-                         "open CamAgent and choose Add a camera (or type: camagent add)")
+        raise SystemExit(f"CamAgent found no settings at {config_path}, so there's nothing to start yet. Set up a "
+                         "camera first. Open CamAgent and choose Add a camera, or type: camagent add")
 
     if os.name == "nt":
         exe, xml = _win_paths()
@@ -259,11 +259,12 @@ def install(config_path=None):
         installed = is_installed()
         if not _winsw_ok(exe):                  # missing, or not the file it should be: checked on every install
             if exe.exists():
-                print(f"The background helper {exe} isn't the expected file (its checksum differs); replacing it.")
+                print(f"The background helper {exe} isn't the expected file. Its checksum differs. CamAgent is "
+                      "replacing it.")
                 if installed:
                     subprocess.run(["sc", "stop", SERVICE], capture_output=True)
                     time.sleep(3)
-            print(f"Downloading the helper that runs CamAgent in the background (WinSW) to {exe}")
+            print(f"CamAgent is downloading the helper that runs it in the background (WinSW) to {exe}")
             _download_checked(WINSW_URL, WINSW_SHA256, exe)
         xml.write_text(_win_xml(config_path), encoding="utf-8")
         if installed:
@@ -272,16 +273,16 @@ def install(config_path=None):
             _run([exe, "install"])
         _win_apply_account(config_path)
         _run([exe, "start"])
-        print(f"CamAgent now runs in the background and starts by itself with the computer. Its log is in "
-              f"{base_dir() / 'logs'} (or open CamAgent > Show the recent log).")
+        print("CamAgent now runs in the background. It starts by itself whenever this computer turns on.")
+        print(f"CamAgent's log is in {base_dir() / 'logs'}. You can also open CamAgent > Show the recent log.")
     else:
         _linux_seal(config_path)
         UNIT_PATH.write_text(_linux_unit(config_path), encoding="utf-8")
         _run(["systemctl", "daemon-reload"])
         _run(["systemctl", "enable", SERVICE])
         _run(["systemctl", "restart", SERVICE])
-        print("CamAgent now runs in the background and starts by itself with the computer. To see its log: open "
-              "CamAgent > Show the recent log (or type: journalctl -u camagent -f)")
+        print("CamAgent now runs in the background. It starts by itself whenever this computer turns on.")
+        print("To see CamAgent's log, open CamAgent > Show the recent log. To watch the log as it happens, type: journalctl -u camagent -f")
     from .config import load_or_defaults
     if load_or_defaults(config_path)["update"].get("auto", True) and not update_schedule_installed():
         install_update_schedule(config_path)
@@ -306,7 +307,7 @@ def uninstall():
         remove_update_schedule()
     if remote_installed():
         remove_remote()
-    print("CamAgent no longer runs in the background, so no camera is being sent from this computer.")
+    print("CamAgent no longer runs in the background. This computer isn't sending any camera video now.")
 
 
 def is_installed() -> bool:
@@ -448,7 +449,7 @@ WantedBy=timers.target
         _run(["systemctl", "daemon-reload"])
         _run(["systemctl", "enable", "--now", "camagent-update.timer"])
         _install_update_now(config_path)
-    print("Automatic updates: on (CamAgent checks for a new version each night, around 3 AM).")
+    print("Automatic updates: on. CamAgent checks for a new version each night, around 3 AM.")
 
 
 def _install_update_now(config_path):

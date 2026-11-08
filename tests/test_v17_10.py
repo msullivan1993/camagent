@@ -97,7 +97,7 @@ with mock.patch.object(builtins, "input", lambda *a: next(answers)), mock.patch.
     assert configure._make_login(cam)
 assert cam["username"] == "yonderview" and len(cam["password"]) == 16 and cam["password"] in out.getvalue()
 assert len(logins) == 2 and all(u == "yonderview" for u, _ in logins)     # never the admin login
-assert "admin" not in " ".join(u for u, _ in logins) and "Not Administrator" in out.getvalue()
+assert "admin" not in " ".join(u for u, _ in logins) and "Don't choose Administrator" in out.getvalue()
 # giving up on it: enter a different login
 cam = {"host": "10.0.0.5", "onvif_port": 80, "username": "", "password": ""}
 logins.clear(); answers = iter(["", "2"])

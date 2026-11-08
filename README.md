@@ -91,7 +91,7 @@ everything, grouped by what you're doing:
 1 camera  |  CamAgent is running  |  YonderView: signed in as Mike
 
  Cameras
-  1. See my cameras and how they're doing
+  1. See if your cameras are working
   2. Add a camera
   3. Change or remove a camera...
 
@@ -145,9 +145,7 @@ sleep (offering to turn that off, since a sleeping computer takes the camera off
 and the camera's Control page shows just those. `camagent probe <camera>` prints the same list, without moving
 or switching anything. Lights switch themselves off and forced day/night returns to automatic after a while.
 
-**Fixing the camera's stream:** `camagent fix-stream <camera>` shows what would bring the camera to H.264,
-1080p or less, and 2-second keyframes, and changes it after asking (setup offers the same). Most cameras need an
-administrator login for this. camagent also listens for the camera's own alarms (covered, moved, out of focus)
+**Alarms:** camagent also listens for the camera's own alarms (covered, moved, out of focus)
 and reports them to the host.
 
 **Weather station (beta):** camagent can read a Tempest, Davis WeatherLink Live or Ecowitt gateway on the

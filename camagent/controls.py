@@ -108,7 +108,7 @@ class Controls:
     # ---------- helpers ----------
     def _imaging(self):
         if not (self.p.onvif and self.p.source):
-            raise RuntimeError("this camera has no imaging controls")
+            raise RuntimeError("This camera has no imaging controls")
         return self.p.onvif.create_imaging_service()
 
     def _timer(self, key, seconds, fn):
@@ -130,7 +130,7 @@ class Controls:
             if _denied(e):
                 self.denied.add(name)
                 self.caps["denied"] = sorted(self.denied)
-                raise NotAllowed(f"the camera didn't allow {name.replace('_', ' ')}: camagent's camera login needs a "
+                raise NotAllowed(f"This camera didn't allow {name.replace('_', ' ')}. CamAgent's camera login needs a "
                                  "higher level (Operator or Administrator) in the camera's user settings")
             raise
 
@@ -229,11 +229,11 @@ class Controls:
     def aux(self, command, keep=False):
         available = self.caps.get("aux") or []
         if command not in available:
-            raise ValueError("this camera doesn't offer that command")
+            raise ValueError("This camera doesn't offer that command")
         kind = aux_kind(command)
         wait = COOLDOWN_S.get(kind, 0) - (time.time() - self._last.get(kind, 0))
         if is_on(command) and wait > 0:
-            raise RuntimeError(f"please wait {int(wait) + 1} s before using the {kind} again")
+            raise RuntimeError(f"Wait {int(wait) + 1} seconds before using the {kind} again")
         self._try(kind, lambda: self.p.ptz.SendAuxiliaryCommand({"ProfileToken": self.p.token, "AuxiliaryData": command}))
         self._last[kind] = time.time()
         reply = {"ok": True}
@@ -272,7 +272,7 @@ class Controls:
         """Move to an absolute position (cameras that honor it). camagent remembers where it sent the camera,
         which stands in for the position on cameras that don't report one."""
         if not self.p.ptz:
-            raise RuntimeError("this camera can't be pointed")
+            raise RuntimeError("This camera can't be pointed")
         pos = {"PanTilt": {"x": max(-1.0, min(1.0, float(pan))),
                            "y": max(-1.0, min(1.0, float(tilt if tilt is not None else 0.0)))}}
         if zoom is not None:
@@ -385,11 +385,11 @@ def describe(caps):
     if "clock_drift_s" in caps:
         drift = caps["clock_drift_s"]
         if caps.get("clock_note") == "dst":
-            out.append("Clock:       OK (the camera reports UTC without daylight saving; its own time is right)")
+            out.append("Clock:       OK (the camera reports UTC without daylight saving, and its own time is right)")
         elif abs(drift) < 60:
             out.append("Clock:       OK")
         else:
-            out.append(f"Clock:       off by {drift} s (check the camera's time zone, daylight saving or NTP)")
+            out.append(f"Clock:       off by {drift} s (check the camera's time zone, daylight saving and NTP)")
     p = caps.get("ptz")
     if p:
         out.append(f"PTZ:         presets up to {p.get('presets') or '?'}, home position "
@@ -400,12 +400,13 @@ def describe(caps):
     if caps.get("daynight"):
         out.append(f"Day/night:   {', '.join({'ON': 'day', 'OFF': 'night', 'AUTO': 'auto'}.get(m, m) for m in caps['daynight'])}")
     aux = caps.get("aux") or []
-    out.append(f"Extras:      {', '.join(aux) if aux else 'none offered (no wiper, lights or similar over ONVIF)'}")
+    out.append("Extras:      " + (", ".join(aux) if aux else "none offered (no wiper, lights or similar over ONVIF)"))
     out.append(f"Reboot:      {'yes' if caps.get('reboot') else 'unknown'}")
     if "events" in caps:
-        out.append(f"Alarms:      {'yes (covered, moved, out of focus... are reported)' if caps['events'] else 'not supported'}")
+        out.append("Alarms:      " + ("yes (the camera reports when it's covered, moved or out of focus)"
+                                   if caps["events"] else "not supported"))
     if caps.get("denied"):
-        out.append(f"Not allowed: {', '.join(caps['denied'])}  (the camera login CamAgent uses needs a higher level, "
+        out.append(f"Not allowed: {', '.join(caps['denied'])}  (CamAgent's camera login needs a higher level, "
                    "such as Operator or Administrator, in the camera's user settings)")
     return out
 
@@ -414,7 +415,8 @@ def test_moves(p):
     """Ask the camera to point to two absolute positions and let the person watching say whether it did.
     Some cameras claim absolute moves but ignore them (or fake them, like their position reports)."""
     from .configure import yes
-    if not yes("This will turn the camera left, then right, then back home. Watch the video. Continue?", default=False):
+    if not yes("CamAgent will turn your camera left, then right, then back home. Watch the video. Continue?",
+               default=False):
         return None
     results = []
     for x, where in ((-0.5, "left"), (0.5, "right")):
@@ -426,8 +428,8 @@ def test_moves(p):
     except Exception:  # noqa: BLE001
         pass
     works = all(results)
-    print("\n  Absolute moves: " + ("WORK on this camera. YonderView can point it at a compass direction."
-                                   if works else "don't work on this camera (it ignores them)."))
+    print("\n  Absolute moves: " + ("WORK on your camera. YonderView can point it at a compass direction."
+                                   if works else "don't work on your camera. The camera ignores them."))
     return works
 
 
@@ -445,7 +447,7 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     cam = _pick(cams, camera_id)
     if cam is None:
         return
-    print(f"Asking the camera at {cam['camera'].get('host')} what it can do...")
+    print(f"CamAgent is asking the camera at {cam['camera'].get('host')} what it can do...")
     p = PTZ(cam) if cam["camera"].get("ptz", True) else None
     try:
         if p:
@@ -454,8 +456,8 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
             p = OnvifSession(cam)
             p._connect()
     except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"Couldn't connect to the camera ({e}). Check that it's on and on this network, and that "
-                         "ONVIF is turned on in its web page.")
+        raise SystemExit(f"CamAgent couldn't connect to your camera ({e}). Check that the camera is on and on this "
+                         "network. Also check that ONVIF is turned on in the camera's web page.")
     ctl = Controls(p)
     caps = ctl.probe()
     try:                                                     # alarms: does it publish an event feed at all?
@@ -469,54 +471,14 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     pos = p.position() if hasattr(p, "position") else None
     if pos:
         print(f"  Position:    reports pan {pos['pan']}, tilt {pos['tilt']}, zoom {pos['zoom']} "
-              f"(whether it's real shows once the camera has been moved a few times)")
+              f"(you'll see if this is real after the camera has moved a few times)")
     if moves and (caps.get("ptz") or {}).get("absolute"):
         print()
         test_moves(p)
     elif moves:
-        print("\n  This camera doesn't offer absolute moves, so there's nothing to test.")
+        print("\n  Your camera doesn't offer absolute moves, so there's nothing to test.")
     else:
-        print("\nNothing was moved or switched on. You can try the controls on the camera's Control page on yonderview.net.")
+        print("\nCamAgent didn't move or switch on anything.")
+        print("You can try the controls on your camera's Control page on yonderview.net.")
         if (caps.get("ptz") or {}).get("absolute"):
-            print("To check whether its absolute moves really work: camagent probe --test-moves")
-
-
-
-def cli_fix_stream(config_path=None, camera_id=None):
-    """Offer to set the camera's main stream to what YonderView wants (H.264, up to 1080p, 2 s keyframes)."""
-    from . import config
-    from .configure import _pick, yes
-    from .ptz import PTZ
-    _, cams, _ = config.load_all(config_path)
-    cam = _pick(cams, camera_id)
-    if cam is None:
-        return
-    p = OnvifSession(cam) if not cam["camera"].get("ptz", True) else PTZ(cam)
-    try:
-        p._connect()
-    except Exception as e:  # noqa: BLE001
-        raise SystemExit(f"Couldn't connect to the camera ({e}). Check that it's on and on this network, and that "
-                         "ONVIF is turned on in its web page.")
-    c = Controls(p)
-    changes = c.stream_fixes(apply=False)
-    if not changes:
-        print("Nothing to change: the camera's video already meets YonderView's requirements.")
-        return
-    print("To meet YonderView's requirements, CamAgent would change these camera settings:")
-    for ch in changes:
-        print("  - " + ch)
-    if not yes("Change them on the camera now?", default=True):
-        return
-    from . import camera
-    had_sound = camera.sound_check(cam) if cam["stream"].get("audio") else None
-    try:
-        c.stream_fixes(apply=True)
-    except NotAllowed as e:
-        raise SystemExit(f"{e}. Or change these yourself in the camera's own web page (Video or Encode settings).")
-    print("Done. The camera's video restarts with the new settings within a minute.")
-    if had_sound:
-        import time
-        print("Checking the camera still sends sound...")
-        time.sleep(10)
-        if camera.sound_check(cam) is False:
-            print(camera.AUDIO_LOST)
+            print("To check that absolute moves really work on your camera, type: camagent probe --test-moves")

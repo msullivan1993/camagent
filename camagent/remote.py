@@ -17,6 +17,7 @@ import os
 import platform
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -45,7 +46,7 @@ def _local_host(job):
     try:
         ip = ipaddress.ip_address(host)
     except ValueError:
-        raise ValueError("that isn't a camera address on this network") from None
+        raise ValueError("That isn't a camera address on this network") from None
     if not (ip.is_private or ip.is_link_local) or ip.is_loopback or ip.is_multicast:
         raise ValueError("CamAgent only connects to cameras on this computer's own network")
     try:
@@ -53,7 +54,7 @@ def _local_host(job):
     except (TypeError, ValueError):
         port = 80
     if not 1 <= port <= 65535:
-        raise ValueError("that port number isn't valid")
+        raise ValueError("That port number isn't valid")
     return host, port
 
 
@@ -92,18 +93,19 @@ def _snapshot(job):
     url = str((job.get("payload") or {}).get("rtsp_url") or "")
     from urllib.parse import urlparse
     if urlparse(url).scheme != "rtsp" or urlparse(url).hostname != host:
-        raise ValueError("that video address isn't the camera's")
+        raise ValueError("That video address isn't the camera's")
     ffmpeg = camera.find_ffmpeg("")
     if not ffmpeg:
-        raise ValueError("ffmpeg isn't installed on this computer")
+        raise ValueError("ffmpeg isn't installed on this computer. Install it, then try again")
     r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i",
                         rtsp_with_auth(url, user, pw), "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "6",
                         "-f", "image2", "-c:v", "mjpeg", "pipe:1"], capture_output=True, timeout=25,
                        stdin=subprocess.DEVNULL)
     if r.returncode or not r.stdout:
-        raise ValueError(config.scrub((r.stderr or b"").decode("utf-8", "replace").strip()[-200:]) or "no picture")
+        raise ValueError(config.scrub((r.stderr or b"").decode("utf-8", "replace").strip()[-200:])
+                         or "CamAgent got no picture from the camera")
     if len(r.stdout) > 120_000:
-        raise ValueError("the picture came out too big")
+        raise ValueError("The camera's picture is too big for CamAgent to send")
     return {"jpeg": base64.b64encode(r.stdout).decode("ascii")}
 
 
@@ -157,7 +159,7 @@ _cfg_path = None             # set by run(): the settings file the connect job w
 def _pending_file(setup_id):
     setup_id = str(setup_id or "")
     if not setup_id.isalnum() or len(setup_id) > 40:
-        raise ValueError("bad setup id")
+        raise ValueError("That setup ID isn't valid")
     return config.state_dir() / "pending" / f"{setup_id}.json"
 
 
@@ -193,8 +195,8 @@ def _camera_details(job):
         try:
             d = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            raise ValueError("CamAgent no longer has this camera's setup (it's kept 30 days). Set the camera up "
-                             "again from its page on YonderView") from None
+            raise ValueError("CamAgent no longer has this camera's setup. CamAgent keeps a setup for 30 days. Set the "
+                             "camera up again from its page on YonderView") from None
         pw = secret.unprotect(d.get("password") or "")
         if d.get("password") and not pw:
             raise ValueError("CamAgent couldn't read the camera's saved password. Set the camera up again")
@@ -222,19 +224,19 @@ def _connect(job):
     p = job.get("payload") or {}
     slug = str(p.get("slug") or "")
     if not config.CAMERA_ID.fullmatch(slug):
-        raise ValueError("that isn't a camera ID")
+        raise ValueError("That isn't a camera ID")
     details, want_convert, height, pending = _camera_details(job)
     if urlparse(details["rtsp_url"]).scheme != "rtsp" or urlparse(details["rtsp_url"]).hostname != details["host"]:
-        raise ValueError("that video address isn't the camera's")
+        raise ValueError("That video address isn't the camera's")
     main_path = Path(_cfg_path or config.default_config_path())
     site, token = _account(main_path)
     if not token:
-        raise ValueError("this computer isn't signed in to YonderView")
+        raise ValueError("You haven't signed in to YonderView on this computer yet")
     state, block, info = link.connect(site, token, slug, replace=bool(p.get("replace")))
     if state == "confirm":
         raise ValueError("needs_confirm: this camera already has connection settings")
     if state == "approve":
-        raise ValueError("this computer isn't allowed to set up that camera yet")
+        raise ValueError("YonderView doesn't allow this computer to set up that camera yet")
     main, cams, _ = config.load_all(main_path)
     cam = {s: copy.deepcopy(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS}
     for s in config.MAIN_SECTIONS:
@@ -255,15 +257,17 @@ def _connect(job):
         cam["stream"]["source_height"] = height
     if want_convert or (height and height > limit):
         if not ffmpeg:
-            raise ValueError("this camera's video is bigger than 1080p and ffmpeg isn't installed to convert it")
+            raise ValueError("This camera's video is bigger than 1080p, and ffmpeg isn't installed to convert it. "
+                             "Install ffmpeg, then try again")
         method = convert.best(convert.detect(ffmpeg, timeout=20))
         if not method:
-            raise ValueError("this computer can't convert the camera's video to 1080p; set the camera to 1080p")
+            raise ValueError("This computer can't convert the camera's video to 1080p. Set the camera itself to "
+                             "1080p")
         cam["stream"].update(convert="1080p", encoder=method)
         out.update(convert="1080p", encoder=convert.LABELS.get(method, method))
     ok, msg = test_mqtt(cam)
     if not ok:
-        raise ValueError(f"YonderView didn't take the camera's new login: {msg}")
+        raise ValueError(f"YonderView didn't accept the camera's new login: {msg}")
     config.save_camera(cam, main_path)
     try:
         if service.is_installed():
@@ -282,14 +286,95 @@ HANDLERS = {"discover": _discover, "inspect": _inspect, "snapshot": _snapshot, "
             "stage": _stage, "connect": _connect, "forget": _forget}
 
 
+# ---------- what this computer can do with video (0.20): measured once, told to the website ----------
+CAPABILITY_FILE = "capability.json"
+_measuring = threading.Event()
+
+
+def _fingerprint(ffmpeg):
+    """Changes when the hardware or ffmpeg changes: then the test runs again."""
+    try:
+        size = os.path.getsize(ffmpeg) if ffmpeg else 0
+    except OSError:
+        size = 0
+    return f"{platform.machine()}|{platform.processor()}|{os.cpu_count()}|{ffmpeg}|{size}"
+
+
+def capability():
+    """The last video test's summary, or None (not tested yet)."""
+    import json
+    try:
+        return json.loads((config.state_dir() / CAPABILITY_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def measure(cfg_path=None):
+    """Test how this computer makes video (each way it could: graphics chip or processor), on a 1080p test clip,
+    and keep the summary. About a minute or two of hard work for the computer."""
+    import json
+
+    from . import camera, convert
+    from .versions import GPU_METHODS
+    try:
+        _, cams, _ = config.load_all(cfg_path)
+        configured = cams[0]["stream"].get("ffmpeg", "") if cams else ""
+    except Exception:  # noqa: BLE001
+        configured = ""
+    ffmpeg = camera.find_ffmpeg(configured)
+    if not ffmpeg:
+        return None
+    results = convert.detect(ffmpeg, size="1920x1080", timeout=20)
+    gpu = next(((m, s) for m, s in results if s and m in GPU_METHODS and s >= 1.2), None)
+    cpu = next((s for m, s in results if m == "x264"), None)
+    out = {"gpu": gpu[0] if gpu else "", "gpu_label": convert.LABELS.get(gpu[0], gpu[0]) if gpu else "",
+           "gpu_speed": gpu[1] if gpu else None, "cpu_speed": cpu, "at": int(time.time()),
+           "fp": _fingerprint(ffmpeg)}
+    path = config.state_dir() / CAPABILITY_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(out), encoding="utf-8")
+    log.info("video test: %s", f"{out['gpu_label']} at {out['gpu_speed']}x" if gpu else "no usable graphics chip")
+    return out
+
+
+def _measure_if_needed(cfg_path):
+    """In the background, so check-ins carry on: when there's no test result yet, or the hardware or ffmpeg
+    changed since."""
+    from . import camera
+    if _measuring.is_set():
+        return
+    try:
+        _, cams, _ = config.load_all(cfg_path)
+        configured = cams[0]["stream"].get("ffmpeg", "") if cams else ""
+    except Exception:  # noqa: BLE001
+        configured = ""
+    known = capability()
+    if known and known.get("fp") == _fingerprint(camera.find_ffmpeg(configured)):
+        return
+
+    def go():
+        _measuring.set()
+        try:
+            measure(cfg_path)
+        except Exception as e:  # noqa: BLE001 - the website then just doesn't know yet
+            log.warning("the video test didn't work: %s", e)
+        finally:
+            _measuring.clear()
+    threading.Thread(target=go, daemon=True, name="video-test").start()
+
+
 def _info(cfg_path):
     try:
         _, cams, _ = config.load_all(cfg_path)
         n = len(cams)
     except Exception:  # noqa: BLE001
         n = None
-    return {"version": __version__, "os": f"{platform.system()} {platform.release()}"[:60],
-            "hostname": socket.gethostname()[:60], "python": platform.python_version(), "cameras": n}
+    out = {"version": __version__, "os": f"{platform.system()} {platform.release()}"[:60],
+           "hostname": socket.gethostname()[:60], "python": platform.python_version(), "cameras": n}
+    cap = capability()
+    if cap:
+        out["encoders"] = {k: cap.get(k) for k in ("gpu", "gpu_label", "gpu_speed", "cpu_speed", "at")}
+    return out
 
 
 def _account(cfg_path):
@@ -332,6 +417,8 @@ def run(cfg_path=None, once=False, sleep=time.sleep):
     while True:
         if time.time() - pruned > 3600:
             prune_pending()
+            if not once:
+                _measure_if_needed(cfg_path)       # once per hardware/ffmpeg; checked hourly
             pruned = time.time()
         if _installed() != __version__:
             log.warning("CamAgent %s was installed; the helper restarts to use it", _installed())
@@ -379,7 +466,8 @@ def main(cfg_path=None):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
                         stream=sys.stdout)
     if os.name != "nt" and hasattr(os, "geteuid") and os.geteuid() != 0:
-        print("camagent remote runs as root (it reads this computer's YonderView sign-in).")
+        print("CamAgent's website setup helper (camagent remote) must run as root. It reads this computer's "
+              "YonderView sign-in.")
         return 1
     log.info("camagent %s: website setup helper started", __version__)
     if run(cfg_path) == "updated":

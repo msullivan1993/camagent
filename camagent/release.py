@@ -127,7 +127,7 @@ def _check(version, sums, sig, wheel_bytes, keys=None, lock_bytes=None):
     if not want:
         raise NotSigned(f"camagent {version}: the signed checksums don't list {wheel_name(version)}")
     if hashlib.sha256(wheel_bytes).hexdigest() != want:
-        raise NotSigned(f"camagent {version}: the package doesn't match its signed checksum")
+        raise NotSigned(f"camagent {version}: the downloaded file doesn't match what YonderView published, so CamAgent didn't install it. Try again later; if it keeps happening, tell YonderView support")
     want_lock = listed.get(lock_name(version))
     if not want_lock:
         if _vt(version) >= LOCK_FROM:
@@ -135,7 +135,7 @@ def _check(version, sums, sig, wheel_bytes, keys=None, lock_bytes=None):
                             f"({lock_name(version)})")
         return
     if lock_bytes is None or hashlib.sha256(lock_bytes).hexdigest() != want_lock:
-        raise NotSigned(f"camagent {version}: the list of packages it needs doesn't match its signed checksum")
+        raise NotSigned(f"camagent {version}: the downloaded list of needed packages doesn't match what YonderView published, so CamAgent didn't install it. Try again later; if it keeps happening, tell YonderView support")
 
 
 def fetch(repo, tag, keys=None) -> Path:

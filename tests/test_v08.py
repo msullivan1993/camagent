@@ -55,7 +55,7 @@ c.aux("tt:Wiper|On")
 try:
     c.aux("tt:Wiper|On"); raise AssertionError("cooldown")
 except RuntimeError as e:
-    assert "wait" in str(e)
+    assert "wait" in str(e).lower()
 c.light_s = 0.2
 r = c.aux("tt:IRLamp|On")
 assert r["off_in_s"] == 0.2

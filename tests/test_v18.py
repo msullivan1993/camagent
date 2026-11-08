@@ -87,7 +87,7 @@ with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir",
 assert ok and saved["username"] == "yonderview" and saved["password"].startswith("sealed:") and saved["ptz"]
 ok, out = remote.run_job({"id": 6, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "../x"},
                           "secret": secret_login})
-assert not ok and "bad setup" in out
+assert not ok and "setup ID" in out
 print("v0.18 phase 2 OK")
 
 # ---- 0.18.2: after an update the helper starts again on the new version ----
@@ -152,3 +152,21 @@ with tempfile.TemporaryDirectory() as d:
         assert not (d / "state" / "pending" / "s3.json").exists()
         remote._cfg_path = None
 print("v0.19 connect OK")
+
+# ---- 0.20: the video test, measured once and told to the website ----
+with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir", return_value=Path(d)), \
+        mock.patch("camagent.camera.find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
+        mock.patch("camagent.convert.detect", return_value=[("vaapi", None), ("qsv", 4.2), ("x264", 0.9)]):
+    cap = remote.measure()
+    assert cap["gpu"] == "qsv" and cap["gpu_speed"] == 4.2 and cap["cpu_speed"] == 0.9
+    info = remote._info(Path(d) / "camagent.toml")
+    assert info["encoders"]["gpu"] == "qsv" and "fp" not in info["encoders"]
+    with mock.patch("threading.Thread") as th:              # same hardware and ffmpeg: not tested again
+        remote._measure_if_needed(Path(d) / "camagent.toml")
+        assert not th.called
+with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir", return_value=Path(d)), \
+        mock.patch("camagent.camera.find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
+        mock.patch("camagent.convert.detect", return_value=[("v4l2m2m", 0.8), ("x264", 0.4)]):
+    cap = remote.measure()
+    assert cap["gpu"] == "" and cap["gpu_label"] == ""                 # too slow to count (a Pi)
+print("v0.20 video test OK")

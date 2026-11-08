@@ -460,7 +460,7 @@ def srt_url(cfg: dict, path: str = "") -> str:
 
 
 NO_PASSPHRASE = ("These connection settings have no SRT passphrase, so the video would be sent unencrypted. Get fresh "
-                 "settings from yonderview.net (sign in again, or copy the camera's settings block from its "
+                 "settings from yonderview.net (sign in again, or copy the camera's connection settings from its "
                  "Connection page)")
 
 

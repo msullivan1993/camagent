@@ -69,9 +69,8 @@ def unsafe_python() -> str:
     exe = base_python()
     if admin_only_location(exe):
         return ""
-    return (f"CamAgent runs on a Python installed for one user only ({exe}), which a program run by that user could "
-            "change. To fix it, run CamAgent's installer again (it installs Python for all users and moves CamAgent "
-            "onto it; cameras and settings stay)")
+    return (f"Another user of this computer could change CamAgent, because the Python it runs on ({exe}) belongs to "
+            "one user only. To fix this, run the CamAgent installer again. Your cameras and settings stay")
 
 
 _clock = {"at": 0.0, "problem": ""}
@@ -135,9 +134,9 @@ def find_ffmpeg(configured=""):
             return p
     if picks:
         _refused["reason"] = (f"ffmpeg at {picks[0]} is in a folder any user of this computer can change. CamAgent "
-                              "uses it, but a program run by any user here could swap it for something else. To fix "
-                              "it, in an administrator window type winget install -e --id Gyan.FFmpeg --scope machine "
-                              "--force, then restart CamAgent")
+                              "uses it. But a program run by any user here could swap it for something else. To fix "
+                              "this, open an administrator window and type winget install -e --id Gyan.FFmpeg "
+                              "--scope machine --force. Then restart CamAgent")
         if picks[0] not in _warned_unsafe:
             _warned_unsafe.add(picks[0])
             print("WARNING: " + _refused["reason"] + ".", flush=True)
@@ -154,9 +153,9 @@ def ffmpeg_in_a_profile(configured="") -> str:
     ff = find_ffmpeg(configured)
     users = os.path.join(os.environ.get("SystemDrive", "C:") + os.sep, "Users")
     if ff and os.path.normcase(os.path.abspath(ff)).startswith(os.path.normcase(users) + os.sep):
-        return (f"ffmpeg is installed for one user only ({ff}); CamAgent's own limited account can't use it, so "
-                "CamAgent keeps full system rights for now. To fix it, in an administrator window type winget "
-                "install -e --id Gyan.FFmpeg --scope machine --force, then restart CamAgent")
+        return (f"ffmpeg is installed for one user only ({ff}). CamAgent's own limited account can't use it, so "
+                "CamAgent keeps full system rights for now. To fix this, open an administrator window and type "
+                "winget install -e --id Gyan.FFmpeg --scope machine --force. Then restart CamAgent")
     return ""
 
 
@@ -181,9 +180,9 @@ def install_ffmpeg():
     """Install ffmpeg with the system's package manager. Returns True if the command succeeded."""
     if WINDOWS:
         if not shutil.which("winget"):
-            print("  winget (Windows' app installer) isn't available. Download ffmpeg from "
-                  "https://www.gyan.dev/ffmpeg/builds/ (the 'essentials' build), unzip it to "
-                  "C:\\Program Files\\ffmpeg, and run setup again.")
+            print("  winget (Windows' app installer) isn't available on this computer.")
+            print("  Download ffmpeg from https://www.gyan.dev/ffmpeg/builds/ (the 'essentials' build).")
+            print("  Unzip it to C:\\Program Files\\ffmpeg, then run setup again.")
             return False
         # for all users: under Program Files, where only administrators can change it (the service runs it)
         cmd = ["winget", "install", "-e", "--id", "Gyan.FFmpeg", "--scope", "machine",
@@ -191,8 +190,8 @@ def install_ffmpeg():
     elif shutil.which("apt-get"):
         cmd = ["apt-get", "install", "-y", "ffmpeg"]
     else:
-        print("  CamAgent can't install ffmpeg on this system by itself. Install it with your system's package "
-              "manager, then run setup again.")
+        print("  CamAgent can't install ffmpeg on this system by itself.")
+        print("  Install it with your system's package manager, then run setup again.")
         return False
     print("  Running: " + " ".join(cmd))
     return subprocess.run(cmd).returncode == 0
@@ -220,41 +219,41 @@ def check_and_fix(yes, configured_ffmpeg=""):
     print("Checking this computer...")
     v = sys.version_info
     print(f"  Python {v.major}.{v.minor}: OK" if v >= (3, 11) else
-          f"  Python {v.major}.{v.minor}: too old (3.11 or newer is needed; run the CamAgent installer again)")
+          f"  Python {v.major}.{v.minor}: too old. CamAgent needs 3.11 or newer. Run the CamAgent installer again.")
 
     from . import camera                     # (through camera, so tests and callers can substitute it)
     ffmpeg = camera.find_ffmpeg(configured_ffmpeg)
     if not ffmpeg:
         print(f"  ffmpeg: {unsafe_ffmpeg()}." if unsafe_ffmpeg() else
-              "  ffmpeg: not found. CamAgent needs this free video tool to send video.")
+              "  ffmpeg: not found. CamAgent needs ffmpeg, a free video tool, to send video.")
         if yes("Install ffmpeg now?", default=True) and install_ffmpeg():
             ffmpeg = camera.find_ffmpeg()
         if not ffmpeg:
             print("  ffmpeg still isn't available. Install it, then run setup again.")
-            print("  (Windows: in an administrator window type winget install -e --id Gyan.FFmpeg --scope machine;")
-            print("  Linux: sudo apt install ffmpeg)")
-            if not yes("Continue setup anyway? (It won't stream until ffmpeg is installed.)", default=False):
+            print("  On Windows, open an administrator window and type: winget install -e --id Gyan.FFmpeg --scope machine")
+            print("  On Linux, type: sudo apt install ffmpeg")
+            if not yes("Continue setup anyway? (CamAgent can't send video until ffmpeg is installed.)", default=False):
                 raise SystemExit("Setup stopped. Install ffmpeg, then run camagent again.")
     if ffmpeg:
         print(f"  ffmpeg: {ffmpeg_version(ffmpeg) or ffmpeg}")
         srt = srt_supported(ffmpeg)
         if srt is False:
-            print("  This copy of ffmpeg can't send video the way YonderView receives it (it was built without SRT).")
-            print("  Install the full version (Windows: winget install -e --id Gyan.FFmpeg --scope machine;")
-            print("  Linux: sudo apt install ffmpeg).")
+            print("  The video tool CamAgent uses (ffmpeg) is missing a part CamAgent needs (SRT, how CamAgent sends video).")
+            print("  Install the full version. On Windows, open an administrator window and type: winget install -e --id Gyan.FFmpeg --scope machine")
+            print("  On Linux, type: sudo apt install ffmpeg")
         elif srt:
             print("  Sending video to YonderView (SRT): OK")
     ffprobe = camera.find_ffprobe(ffmpeg)
     if ffmpeg and not ffprobe:
-        print("  ffprobe (part of ffmpeg): not found, so setup can't check the camera's video. Reinstalling ffmpeg")
-        print("  usually fixes this.")
+        print("  ffprobe (part of ffmpeg): not found, so setup can't check your camera's video.")
+        print("  Reinstalling ffmpeg usually fixes this.")
 
     mins = sleep_minutes()
     if mins:
-        print(f"  This computer goes to sleep after {mins} minutes, which would take the camera offline.")
+        print(f"  This computer goes to sleep after {mins} minutes. That would take your camera offline.")
         if yes("Turn off sleep while plugged in?", default=True):
             print("  Sleep turned off." if disable_sleep() else
-                  "  Couldn't change it. Set it yourself: Settings > System > Power > Screen and sleep > Never.")
+                  "  CamAgent couldn't change it. Change it yourself: Settings > System > Power > Screen and sleep > Sleep: Never.")
     elif mins == 0:
         print("  Sleep: off. Good.")
     print()

@@ -28,7 +28,7 @@ with mock.patch.object(prereqs, "WINDOWS", True), \
         mock.patch.object(prereqs, "base_python", return_value=r"C:\Users\Admin\AppData\Local\Programs\Python\Python312\python.exe"), \
         mock.patch.object(prereqs, "admin_only_location", return_value=False):
     why = prereqs.unsafe_python()
-    assert "installed for one user" in why and "installer again" in why
+    assert "one user only" in why and "installer again" in why
     assert prereqs.notices() == [why]
     calls = []
     with tempfile.TemporaryDirectory() as d:
