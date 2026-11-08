@@ -8,6 +8,9 @@ given and sends back the results.
 
 Only the actions in HANDLERS: no shell, no files, no addresses outside this computer's own network. Anything else
 the website might send is answered "unknown" and ignored. Without a link (signed out) it just waits.
+
+0.19: "connect" sets up an approved camera (from a setup kept with its camera request, or a login sent with the job)
+and "forget" deletes a kept setup; kept setups are deleted by themselves after 30 days.
 """
 import logging
 import os
@@ -122,15 +125,16 @@ def _stage(job):
     host, port = _local_host(job)
     user, pw = _login(job)
     p = job.get("payload") or {}
-    setup_id = str(p.get("setup") or "")
-    if not setup_id.isalnum() or len(setup_id) > 40:
-        raise ValueError("bad setup id")
-    folder = config.state_dir() / "pending"
-    folder.mkdir(parents=True, exist_ok=True)
+    path = _pending_file(p.get("setup"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)           # only CamAgent's administrator side (this helper) reads these
+    except OSError:
+        pass
     data = {"host": host, "onvif_port": port, "username": user, "password": secret.protect(pw),
             "rtsp_url": str(p.get("rtsp_url") or "")[:300], "ptz": bool(p.get("ptz")),
-            "ptz_profile": str(p.get("token") or "")[:64], "staged": int(time.time())}
-    path = folder / f"{setup_id}.json"
+            "ptz_profile": str(p.get("token") or "")[:64], "convert": p.get("convert") == "1080p",
+            "source_height": _int(p.get("source_height")), "staged": int(time.time())}
     path.write_text(json.dumps(data), encoding="utf-8")
     try:
         os.chmod(path, 0o600)
@@ -139,8 +143,143 @@ def _stage(job):
     return {"staged": True}
 
 
+def _int(v):
+    try:
+        return max(0, int(v or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+PENDING_DAYS = 30            # a kept setup YonderView hasn't asked for by then is deleted (the login with it)
+_cfg_path = None             # set by run(): the settings file the connect job writes next to
+
+
+def _pending_file(setup_id):
+    setup_id = str(setup_id or "")
+    if not setup_id.isalnum() or len(setup_id) > 40:
+        raise ValueError("bad setup id")
+    return config.state_dir() / "pending" / f"{setup_id}.json"
+
+
+def _forget(job):
+    """Delete a kept setup (YonderView turned the request down, or the host took it back)."""
+    path = _pending_file((job.get("payload") or {}).get("setup"))
+    existed = path.exists()
+    path.unlink(missing_ok=True)
+    return {"forgotten": existed}
+
+
+def prune_pending(now=None):
+    """Kept setups older than PENDING_DAYS are deleted, logins and all."""
+    folder = config.state_dir() / "pending"
+    now = now or time.time()
+    for f in folder.glob("*.json") if folder.exists() else []:
+        try:
+            if now - f.stat().st_mtime > PENDING_DAYS * 86400:
+                f.unlink()
+                log.info("deleted a camera setup YonderView never asked for (%s)", f.stem)
+        except OSError:
+            pass
+
+
+def _camera_details(job):
+    """(camera section, convert, source height) from the kept setup, or from the job itself (login included)."""
+    import json
+
+    from . import secret
+    p = job.get("payload") or {}
+    if p.get("setup"):
+        path = _pending_file(p["setup"])
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise ValueError("CamAgent no longer has this camera's setup (it's kept 30 days). Set the camera up "
+                             "again from its page on YonderView") from None
+        pw = secret.unprotect(d.get("password") or "")
+        if d.get("password") and not pw:
+            raise ValueError("CamAgent couldn't read the camera's saved password. Set the camera up again")
+        cam = {"host": d["host"], "onvif_port": int(d.get("onvif_port") or 80), "username": d.get("username", ""),
+               "password": pw, "rtsp_url": d.get("rtsp_url", ""), "ptz": bool(d.get("ptz")),
+               "ptz_profile": d.get("ptz_profile", "")}
+        _local_host({"payload": {"host": cam["host"], "port": cam["onvif_port"]}})
+        return cam, bool(d.get("convert")), _int(d.get("source_height")), path
+    host, port = _local_host(job)
+    user, pw = _login(job)
+    cam = {"host": host, "onvif_port": port, "username": user, "password": pw,
+           "rtsp_url": str(p.get("rtsp_url") or "")[:300], "ptz": bool(p.get("ptz")),
+           "ptz_profile": str(p.get("token") or "")[:64]}
+    return cam, p.get("convert") == "1080p", _int(p.get("source_height")), None
+
+
+def _connect(job):
+    """Connect an approved camera: fetch its connection settings from YonderView (the same request CamAgent's own
+    menu makes), save the camera here with its login encrypted, check YonderView takes the login, and start it."""
+    import copy
+    from urllib.parse import urlparse
+
+    from . import camera, convert, link, service
+    from .configure import _use_block, test_mqtt
+    p = job.get("payload") or {}
+    slug = str(p.get("slug") or "")
+    if not config.CAMERA_ID.fullmatch(slug):
+        raise ValueError("that isn't a camera ID")
+    details, want_convert, height, pending = _camera_details(job)
+    if urlparse(details["rtsp_url"]).scheme != "rtsp" or urlparse(details["rtsp_url"]).hostname != details["host"]:
+        raise ValueError("that video address isn't the camera's")
+    main_path = Path(_cfg_path or config.default_config_path())
+    site, token = _account(main_path)
+    if not token:
+        raise ValueError("this computer isn't signed in to YonderView")
+    state, block, info = link.connect(site, token, slug, replace=bool(p.get("replace")))
+    if state == "confirm":
+        raise ValueError("needs_confirm: this camera already has connection settings")
+    if state == "approve":
+        raise ValueError("this computer isn't allowed to set up that camera yet")
+    main, cams, _ = config.load_all(main_path)
+    cam = {s: copy.deepcopy(config.DEFAULTS[s]) for s in config.CAMERA_SECTIONS}
+    for s in config.MAIN_SECTIONS:
+        cam[s] = copy.deepcopy(main[s])
+    old = next((c for c in cams if c["platform"].get("camera_id") == slug), None)
+    if old:                                    # set up again: keep its stream choices (audio, weather station...)
+        for s in ("stream", "weather"):
+            cam[s].update(copy.deepcopy(old.get(s) or {}))
+        cam["_source"], cam["_legacy"] = old.get("_source"), old.get("_legacy")
+    cam["camera"].update(details)
+    _use_block(cam, block)
+    ffmpeg = camera.find_ffmpeg(cam["stream"].get("ffmpeg") or (cams[0]["stream"].get("ffmpeg", "") if cams else ""))
+    if ffmpeg:
+        cam["stream"]["ffmpeg"] = ffmpeg
+    limit = int(info.get("max_height") or 1080)
+    out = {"camera": slug, "convert": "off"}
+    if height:
+        cam["stream"]["source_height"] = height
+    if want_convert or (height and height > limit):
+        if not ffmpeg:
+            raise ValueError("this camera's video is bigger than 1080p and ffmpeg isn't installed to convert it")
+        method = convert.best(convert.detect(ffmpeg, timeout=20))
+        if not method:
+            raise ValueError("this computer can't convert the camera's video to 1080p; set the camera to 1080p")
+        cam["stream"].update(convert="1080p", encoder=method)
+        out.update(convert="1080p", encoder=convert.LABELS.get(method, method))
+    ok, msg = test_mqtt(cam)
+    if not ok:
+        raise ValueError(f"YonderView didn't take the camera's new login: {msg}")
+    config.save_camera(cam, main_path)
+    try:
+        if service.is_installed():
+            service.restart(remote=False)          # not this helper: it's still answering the website
+        else:
+            service.install(main_path)
+    except SystemExit as e:                        # the service functions stop with a message for the person
+        raise ValueError(str(e)) from None
+    if pending:
+        pending.unlink(missing_ok=True)            # the login now lives (encrypted) in the camera's settings file
+    log.info("camera %s set up from the website", slug)
+    return out
+
+
 HANDLERS = {"discover": _discover, "inspect": _inspect, "snapshot": _snapshot, "ptz_test": _ptz_test,
-            "stage": _stage}
+            "stage": _stage, "connect": _connect, "forget": _forget}
 
 
 def _info(cfg_path):
@@ -187,9 +326,13 @@ def _installed():
 def run(cfg_path=None, once=False, sleep=time.sleep):
     """Check in, run what the website asks, repeat. once=True: a single check-in (tests). Returns "updated" when a
     newer CamAgent was installed meanwhile: main() then exits, and the service manager starts the new version."""
-    cfg_path = cfg_path or config.default_config_path()
-    backoff = 5
+    global _cfg_path
+    cfg_path = _cfg_path = cfg_path or config.default_config_path()
+    backoff, pruned = 5, 0
     while True:
+        if time.time() - pruned > 3600:
+            prune_pending()
+            pruned = time.time()
         if _installed() != __version__:
             log.warning("CamAgent %s was installed; the helper restarts to use it", _installed())
             return "updated"

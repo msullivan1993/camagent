@@ -1,5 +1,6 @@
 """0.18 (beta): camagent remote, the website setup helper: checks in, runs only known jobs, sends results."""
 import sys
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -101,3 +102,53 @@ with mock.patch("camagent.service.remote_installed", return_value=True), \
     service.restart_remote()
 assert calls == [["systemctl", "restart", "camagent-remote.service"]]
 print("v0.18.2 helper restart OK")
+
+# ---- 0.19: connect an approved camera, forget a kept setup ----
+BLOCK = ("SRT_URL=srt://ingest.example:8890?streamid=publish:kyx0001:kyx0001:srtpw&passphrase=pp1234567890&pbkeylen=16\n"
+         "MQTT_HOST=mqtt.example\nMQTT_PASS=mqpw\nMQTT_PORT=8883\n")
+with tempfile.TemporaryDirectory() as d:
+    d = Path(d)
+    main_path = d / "camagent.toml"
+    with mock.patch("camagent.config.state_dir", return_value=d / "state"), \
+            mock.patch("camagent.secret.protect", side_effect=lambda v: v), \
+            mock.patch("camagent.secret.unprotect", side_effect=lambda v: v):
+        remote._cfg_path = main_path
+        ok, out = remote.run_job({"id": 7, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "s1",
+                                  "rtsp_url": "rtsp://172.16.20.113:554/live", "ptz": True, "token": "p0",
+                                  "convert": "1080p", "source_height": 1440}, "secret": secret_login})
+        assert ok
+        calls = {}
+        with mock.patch("camagent.remote._account", return_value=("https://yv.example", "tok")), \
+                mock.patch("camagent.link.connect", side_effect=lambda s, t, slug, replace=False:
+                           calls.setdefault("connect", (slug, replace)) and ("ok", BLOCK, {"max_height": 1080})), \
+                mock.patch("camagent.camera.find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
+                mock.patch("camagent.convert.detect", return_value=[("qsv", 3.0)]), \
+                mock.patch("camagent.convert.best", return_value="qsv"), \
+                mock.patch("camagent.configure.test_mqtt", return_value=(True, "connected")), \
+                mock.patch("camagent.service.is_installed", return_value=True), \
+                mock.patch("camagent.service.restart", side_effect=lambda remote=True: calls.setdefault("restart", remote)):
+            ok, out = remote.run_job({"id": 8, "kind": "connect", "payload": {"slug": "kyx0001", "setup": "s1"}})
+        assert ok, out
+        assert out["convert"] == "1080p" and calls["connect"] == ("kyx0001", False) and calls["restart"] is False
+        saved = (d / "cameras" / "kyx0001.toml").read_text()
+        assert "172.16.20.113" in saved and "Abcdefgh23456789" in saved and 'convert = "1080p"' in saved
+        assert not (d / "state" / "pending" / "s1.json").exists()          # the login lives in the camera file now
+        # the job can't point CamAgent at another address than the camera's
+        ok, out = remote.run_job({"id": 9, "kind": "connect", "payload": {"slug": "kyx0001", "host": "172.16.20.113",
+                                  "rtsp_url": "rtsp://10.9.9.9/live"}, "secret": secret_login})
+        assert not ok and "isn't the camera's" in out
+        ok, out = remote.run_job({"id": 10, "kind": "connect", "payload": {"slug": "../etc", "setup": "s1"}})
+        assert not ok
+        ok, out = remote.run_job({"id": 11, "kind": "connect", "payload": {"slug": "kyx0001", "setup": "gone"}})
+        assert not ok and "no longer has" in out
+        # forget, and the 30-day clean-up
+        remote.run_job({"id": 12, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "s2",
+                        "rtsp_url": "rtsp://172.16.20.113:554/live"}, "secret": secret_login})
+        ok, out = remote.run_job({"id": 13, "kind": "forget", "payload": {"setup": "s2"}})
+        assert ok and out["forgotten"] and not (d / "state" / "pending" / "s2.json").exists()
+        remote.run_job({"id": 14, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "s3",
+                        "rtsp_url": "rtsp://172.16.20.113:554/live"}, "secret": secret_login})
+        remote.prune_pending(now=time.time() + 31 * 86400)
+        assert not (d / "state" / "pending" / "s3.json").exists()
+        remote._cfg_path = None
+print("v0.19 connect OK")

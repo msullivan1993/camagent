@@ -372,7 +372,7 @@ def refresh_unit(config_path=None):
         pass
 
 
-def restart():
+def restart(remote=True):
     _require_admin()
     if not is_installed():
         print('CamAgent isn\'t running in the background yet. Open CamAgent and choose "Start CamAgent".')
@@ -382,7 +382,8 @@ def restart():
         _run([exe, "restart"])
     else:
         _run(["systemctl", "restart", SERVICE])
-    restart_remote()
+    if remote:
+        restart_remote()
 
 
 def restart_remote():
