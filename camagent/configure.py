@@ -443,8 +443,11 @@ def _from_account(cfg, main_path=None):
         print(f"  {e}")
         return False
     if not cams:
-        print("  There are no cameras on your account yet. Add the camera on yonderview.net first (Host a")
-        print("  camera) and wait for it to be approved, then choose Add a camera here again.")
+        print("  There are no approved cameras on your account yet. CamAgent can only connect a camera once")
+        print("  YonderView has approved it.")
+        print("  To add a new camera: on yonderview.net, send a camera request (Host a camera). On the request's")
+        print('  page, click "Add the camera now": CamAgent on this computer checks the camera from there, and')
+        print("  connects it by itself once the request is approved.")
         return False
     print("Which camera is this?")
     pick = choose(cams, lambda c: (f"{c['name']}" + (f" ({c['place']})" if c.get("place") else "")
