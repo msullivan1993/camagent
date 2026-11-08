@@ -54,6 +54,45 @@ def choose(items, label, allow_none_text=None):
         print(f"  Type a number from 1 to {len(items)}" + (", or 0." if allow_none_text else "."))
 
 
+TRY_FIX = "Let CamAgent try to change it for you (with CamAgent's own camera login)"
+
+
+def _try_fix_stream(cam, max_height=1080):
+    """Change the camera's video over ONVIF (H.264, at most max_height, 2-second keyframes) with the login CamAgent
+    already uses. CamAgent never asks for the camera's admin login: most cameras only let an administrator change
+    this, so it often doesn't work, and then the person changes it in the camera's web page. True if it changed."""
+    from .controls import Controls, NotAllowed, OnvifSession
+    print("  CamAgent is asking your camera to change its video setting...")
+    had_sound = camera.sound_check(cam) if cam["stream"].get("audio") else None
+    try:
+        s = OnvifSession(cam)
+        s._connect()
+        changes = Controls(s).stream_fixes(apply=True, max_height=max_height)
+    except NotAllowed:
+        print("  Your camera didn't allow it. Most cameras only let an administrator change the video setting,")
+        print("  and CamAgent never uses the camera's admin login. Change it yourself in the camera's web page.")
+        return False
+    except Exception as e:  # noqa: BLE001
+        print(f"  CamAgent couldn't change the camera's video setting ({camera.friendly_error(e)}).")
+        print("  Change it yourself in the camera's web page.")
+        return False
+    if not changes:
+        print("  Your camera didn't need any change.")
+        return True
+    print("  Your camera changed: " + "; ".join(changes) + ".")
+    print("  CamAgent is waiting a few seconds for the camera's video to restart...")
+    time.sleep(8)
+    if had_sound and camera.sound_check(cam) is False:
+        print(camera.AUDIO_LOST)
+    return True
+
+
+def _measure_again(cam):
+    cam["_measure"] = camera.measure_stream(
+        camera.find_ffprobe(camera.find_ffmpeg(cam["stream"].get("ffmpeg", ""))),
+        config.rtsp_with_auth(cam["camera"]["rtsp_url"], cam["camera"]["username"], cam["camera"]["password"]))
+
+
 RULE = "-" * 64            # plain dashes: they show the same in every Windows and Linux window
 
 
@@ -327,7 +366,10 @@ def step_check_stream(cfg, ffprobe):
             print("  the encoding (Encode Mode) to H.264. Save. Also turn off any 'smart codec' or H.264+ option.")
             print(f"  Then choose \"{recheck}\".")
             print(f"  If you can't change the camera's setting, choose \"{here}\".")
-            pick = choose([recheck, other, keep, here], str)
+            pick = choose([recheck, other, keep, here, TRY_FIX], str)
+            if pick == TRY_FIX:
+                _try_fix_stream(cfg)
+                continue                                          # check the video again either way
             if pick == here:
                 cfg["_convert_codec"] = True
                 break
@@ -506,8 +548,14 @@ def step_convert(cfg, ffmpeg):
     here = "Convert the video to 1080p H.264 on this computer (recommended)"
     source = f"Send your camera's own {what} (only if YonderView approved it for this camera)"
     camera_side = "I'll change the camera's setting to 1080p H.264 myself"
-    options = [here, camera_side] + ([] if h265 else [source])
+    options = [here, camera_side] + ([] if h265 else [source]) + [TRY_FIX]
     pick = choose(options, str)
+    if pick == TRY_FIX:
+        if _try_fix_stream(cfg, max_height=convert.TARGET_HEIGHT):
+            s["convert"] = "off"
+            _measure_again(cfg)
+            return
+        pick = camera_side                                        # it didn't work: the do-it-yourself steps
     if pick == source:
         s["convert"] = "off"
         return
@@ -756,15 +804,15 @@ def _finish(cam, main_path, others):
                 print("  and save. Then choose \"I've changed the camera. Check again\".")
                 other, recheck = "Pick a different video from the camera", "I've changed the camera. Check again"
                 keep = "Save anyway (not recommended: YonderView declines the video until you fix this)"
-                pick = choose([other, recheck, keep], str)
+                pick = choose([other, recheck, keep, TRY_FIX], str)
+                if pick == TRY_FIX:
+                    _try_fix_stream(cam, max_height=limit)
+                    pick = recheck
                 if pick == other:
                     _rewalk_stream(cam)
                     continue
                 if pick == recheck:
-                    cam["_measure"] = camera.measure_stream(
-                        camera.find_ffprobe(camera.find_ffmpeg(cam["stream"].get("ffmpeg", ""))),
-                        config.rtsp_with_auth(cam["camera"]["rtsp_url"], cam["camera"]["username"],
-                                              cam["camera"]["password"]))
+                    _measure_again(cam)
                     continue
             break
         print("  Check this computer's internet connection first. If that's fine, get the YonderView settings again.")
