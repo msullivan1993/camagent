@@ -1,5 +1,6 @@
 """Runs ffmpeg (camera RTSP -> server SRT), restarts it when it dies or stalls, and keeps stats."""
 import collections
+import json
 import logging
 import subprocess
 import threading
@@ -55,6 +56,9 @@ class Uplink(threading.Thread):
         if s.get("convert", "off") == "off":
             self.stats.pop("convert", None)
             return None
+        if self._already_fits():
+            self.stats.pop("convert", None)
+            return None
         method = s.get("encoder") or "x264"
         current = self._fell_to or method
         if current != "x264" and self._fast_fails >= self.FAST_FAILS_TO_FALL_BACK:
@@ -69,6 +73,37 @@ class Uplink(threading.Thread):
         self.stats["convert"] = {"height": convert.TARGET_HEIGHT, "encoder": method, "fallback": fallback,
                                  "source_height": int(s.get("source_height") or 0) or None}
         return method
+
+    FITS_CHECK_S = 600                         # how long a look at what the camera sends is trusted
+
+    def _already_fits(self):
+        """The camera already sends H.264 at 1080p or smaller (its setting changed since setup turned converting
+        on): send it as it is instead of decoding and encoding every frame for nothing (2026-11-08: a camera set
+        back from 2160p to 1080p kept a Ryzen mini PC at 50% instead of 25%). Looked at when the stream starts,
+        at most every FITS_CHECK_S; if the camera can't be checked, converting goes on as set."""
+        now = time.time()
+        cached = getattr(self, "_fits", None)
+        if cached and now - cached[0] < self.FITS_CHECK_S:
+            return cached[1]
+        fits, found = False, None
+        try:
+            cam = self.cfg["camera"]
+            ffprobe = camera.find_ffprobe(find_ffmpeg(self.cfg["stream"].get("ffmpeg", "")))
+            if ffprobe:
+                r = subprocess.run([ffprobe, "-v", "error", "-rtsp_transport", "tcp", "-select_streams", "v:0",
+                                    "-show_entries", "stream=codec_name,height", "-of", "json",
+                                    rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])],
+                                   capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+                st = (json.loads(r.stdout or "{}").get("streams") or [{}])[0]
+                found = (st.get("codec_name"), int(st.get("height") or 0))
+                fits = found[0] == "h264" and 0 < found[1] <= convert.TARGET_HEIGHT
+        except Exception:  # noqa: BLE001 - can't tell: keep converting as set up
+            fits = False
+        if fits and not (cached and cached[1]):
+            self.log.info("the camera sends %sp H.264 now, so CamAgent sends it as it is (no converting needed)",
+                          found[1])
+        self._fits = (now, fits)
+        return fits
 
     # what ffmpeg says when a GPU or its encoder can't be used (not when the network or the camera drops)
     ENCODER_TROUBLE = ("qsv", "vaapi", "cuda", "nvenc", "amf", "hwaccel", "hw device", "device creation",

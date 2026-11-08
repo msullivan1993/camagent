@@ -223,3 +223,20 @@ assert _f.calls.count(("stop",)) == 2                     # both moves stopped, 
 assert ("abs",) not in _f.calls                           # a made-up position: never "back to" it
 assert ("move", -0.3, "PT1S") in _f.calls and _r["follows"] is False
 print("v0.21.1 stop without zoom, no move back to a made-up position OK")
+
+# ---- 0.21.2: converting turned on, but the camera already sends 1080p H.264: send it as it is ----
+import json as _json  # noqa: E402
+import logging as _logging  # noqa: E402
+from camagent import uplink as _uplink  # noqa: E402
+
+_up = _uplink.Uplink.__new__(_uplink.Uplink)
+_up.cfg = {"camera": {"rtsp_url": "rtsp://192.168.1.5/live", "username": "u", "password": "p"},
+           "stream": {"convert": "1080p", "encoder": "amf", "source_height": 2160}}
+_up.stats, _up._fell_to, _up._fast_fails, _up.log = {}, None, 0, _logging.getLogger("t")
+for codec, height, expect in (("h264", 1080, None), ("h264", 2160, "amf"), ("hevc", 1080, "amf")):
+    _up._fits = None
+    out = _NS(stdout=_json.dumps({"streams": [{"codec_name": codec, "height": height}]}), returncode=0)
+    with mock.patch("subprocess.run", return_value=out), mock.patch.object(_uplink.camera, "find_ffprobe",
+                                                                          return_value="ffprobe"):
+        assert _up.convert_method() == expect, (codec, height)
+print("v0.21.2 no converting when the camera already fits OK")
