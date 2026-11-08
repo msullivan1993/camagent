@@ -88,3 +88,16 @@ ok, out = remote.run_job({"id": 6, "kind": "stage", "payload": {"host": "172.16.
                           "secret": secret_login})
 assert not ok and "bad setup" in out
 print("v0.18 phase 2 OK")
+
+# ---- 0.18.2: after an update the helper starts again on the new version ----
+with mock.patch("camagent.remote._installed", return_value="9.9.9"), \
+        mock.patch("camagent.remote._account", return_value=("https://x", "tok")), \
+        mock.patch("camagent.link.checkin") as ci:
+    assert remote.run(once=True) == "updated" and not ci.called
+calls = []
+with mock.patch("camagent.service.remote_installed", return_value=True), \
+        mock.patch("camagent.service._run", side_effect=lambda cmd, check=True: calls.append(cmd)), \
+        mock.patch("camagent.service.os.name", "posix"):
+    service.restart_remote()
+assert calls == [["systemctl", "restart", "camagent-remote.service"]]
+print("v0.18.2 helper restart OK")

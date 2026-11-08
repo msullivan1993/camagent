@@ -382,6 +382,22 @@ def restart():
         _run([exe, "restart"])
     else:
         _run(["systemctl", "restart", SERVICE])
+    restart_remote()
+
+
+def restart_remote():
+    """The website setup helper starts again too (after an update it would otherwise keep running the old version;
+    0.18.2). It also notices a new version by itself within a minute."""
+    try:
+        if not remote_installed():
+            return
+        if os.name == "nt":
+            _run(["schtasks", "/End", "/TN", REMOTE_TASK], check=False)
+            _run(["schtasks", "/Run", "/TN", REMOTE_TASK], check=False)
+        else:
+            _run(["systemctl", "restart", "camagent-remote.service"], check=False)
+    except Exception:  # noqa: BLE001 - never fail a restart or an update over the helper
+        pass
 
 
 # ---------- nightly update schedule ----------

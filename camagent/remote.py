@@ -15,6 +15,7 @@ import platform
 import socket
 import sys
 import time
+from pathlib import Path
 
 from . import __version__, config, link
 
@@ -173,11 +174,25 @@ def run_job(job):
         return False, config.scrub(str(e))[:300]
 
 
+def _installed():
+    """The CamAgent version on disk now (an update may have replaced the code this helper started with)."""
+    import re
+    try:
+        text = (Path(__file__).parent / "__init__.py").read_text(encoding="utf-8")
+        return re.search(r'__version__\s*=\s*"([^"]+)"', text).group(1)
+    except (OSError, AttributeError):
+        return __version__
+
+
 def run(cfg_path=None, once=False, sleep=time.sleep):
-    """Check in, run what the website asks, repeat. once=True: a single check-in (tests)."""
+    """Check in, run what the website asks, repeat. once=True: a single check-in (tests). Returns "updated" when a
+    newer CamAgent was installed meanwhile: main() then exits, and the service manager starts the new version."""
     cfg_path = cfg_path or config.default_config_path()
     backoff = 5
     while True:
+        if _installed() != __version__:
+            log.warning("CamAgent %s was installed; the helper restarts to use it", _installed())
+            return "updated"
         site, token = _account(cfg_path)
         if not token:
             if once:
@@ -224,5 +239,6 @@ def main(cfg_path=None):
         print("camagent remote runs as root (it reads this computer's YonderView sign-in).")
         return 1
     log.info("camagent %s: website setup helper started", __version__)
-    run(cfg_path)
+    if run(cfg_path) == "updated":
+        return 75                          # systemd (Restart=always) or the Windows task starts the new version
     return 0
