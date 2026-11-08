@@ -54,8 +54,12 @@ def choose(items, label, allow_none_text=None):
         print(f"  Type a number from 1 to {len(items)}" + (", or 0." if allow_none_text else "."))
 
 
+RULE = "-" * 64            # plain dashes: they show the same in every Windows and Linux window
+
+
 def heading(text):
-    print(f"\n=== {text} ===")
+    """A new section of setup: a blank line and a line of dashes above and below, so each step stands apart."""
+    print(f"\n\n{RULE}\n  {text}\n{RULE}")
 
 
 # ---------- steps ----------
