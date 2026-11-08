@@ -80,6 +80,18 @@ def _get(url, accept="application/octet-stream", sleep=None):
     return data
 
 
+def _download(url, api_url="", sleep=None):
+    """A release file: from its normal download address, else the same file through GitHub's API (on 2026-11-08
+    the download addresses answered 504 for an hour while the API served the files). The signature check that
+    follows is what makes a file trustworthy, whichever address it came from."""
+    try:
+        return _get(url, sleep=sleep)
+    except DownloadFailed:
+        if not api_url.startswith("https://api.github.com/"):
+            raise
+        return _get(api_url, sleep=sleep)
+
+
 def verify_sums(sums: bytes, sig: bytes, keys=None) -> bool:
     """True if `sig` is a valid Ed25519 signature of `sums` by one of the release keys."""
     try:
@@ -177,13 +189,14 @@ def fetch(repo, tag, keys=None) -> Path:
     owner, name = _repo_parts(repo)
     info = json.loads(_get(API.format(owner=owner, name=name, tag=tag), "application/vnd.github+json"))
     assets = {a.get("name"): a.get("browser_download_url", "") for a in info.get("assets") or []}
+    api_urls = {a.get("name"): a.get("url", "") for a in info.get("assets") or []}   # the same files, via the API
     need = ["SHA256SUMS", "SHA256SUMS.sig", wheel_name(version)]
     if assets.get(lock_name(version)) or _vt(version) >= LOCK_FROM:
         need.append(lock_name(version))
     missing = [n for n in need if not assets.get(n)]
     if missing:
         raise NotSigned(f"camagent {tag} isn't a signed release (missing {', '.join(missing)})")
-    got = {n: _get(assets[n]) for n in need}
+    got = {n: _download(assets[n], api_urls.get(n, "")) for n in need}
     _check(version, got["SHA256SUMS"], got["SHA256SUMS.sig"], got[wheel_name(version)], keys,
            got.get(lock_name(version)))
     d.mkdir(parents=True, exist_ok=True)

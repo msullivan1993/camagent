@@ -61,3 +61,16 @@ with mock.patch("urllib.request.OpenerDirector.open",
         pass
     assert op.call_count == 1                      # missing file: no point trying again
 print("v0.20.3 download retries OK")
+
+# the download address fails, the API address for the same file works
+seen = []
+def _open2(req, timeout=60):
+    seen.append(req.full_url)
+    if "api.github.com" not in req.full_url:
+        raise urllib.error.HTTPError(req.full_url, 504, "Gateway Time-out", {}, None)
+    return _Resp()
+with mock.patch("urllib.request.OpenerDirector.open", side_effect=_open2):
+    assert release._download("https://github.com/x/y/releases/download/v1/a.whl",
+                             "https://api.github.com/repos/x/y/releases/assets/1", sleep=lambda s: None) == b"ok"
+assert seen[-1].startswith("https://api.github.com/") and len(seen) == 4
+print("v0.20.3 API fallback OK")
