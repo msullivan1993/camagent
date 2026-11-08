@@ -48,13 +48,33 @@ class _HTTPSOnly(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _get(url, accept="application/octet-stream"):
+class DownloadFailed(Exception):
+    """GitHub, where the releases are kept, didn't hand over a file (busy, down, or no internet)."""
+
+
+RETRY_WAITS = (5, 20)          # seconds before the second and third tries
+
+
+def _get(url, accept="application/octet-stream", sleep=None):
+    """The file at url. GitHub sometimes answers "busy" (5xx) or times out for a minute: up to three tries."""
+    import time
+    import urllib.error
     if not url.lower().startswith("https://"):
         raise NotSigned(f"refusing a download over plain http: {url}")
     opener = urllib.request.build_opener(_HTTPSOnly)
     req = urllib.request.Request(url, headers={"Accept": accept, "User-Agent": "camagent"})
-    with opener.open(req, timeout=60) as r:
-        data = r.read(MAX_DOWNLOAD + 1)
+    for attempt in range(len(RETRY_WAITS) + 1):
+        try:
+            with opener.open(req, timeout=60) as r:
+                data = r.read(MAX_DOWNLOAD + 1)
+            break
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == len(RETRY_WAITS):
+                raise DownloadFailed(f"GitHub answered {e.code} for {url.rsplit('/', 1)[-1]}") from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            if attempt == len(RETRY_WAITS):
+                raise DownloadFailed(f"couldn't reach GitHub ({getattr(e, 'reason', e)})") from None
+        (sleep or time.sleep)(RETRY_WAITS[attempt])
     if len(data) > MAX_DOWNLOAD:
         raise NotSigned(f"download too big: {url}")
     return data

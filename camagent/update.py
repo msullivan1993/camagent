@@ -145,8 +145,13 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False, if_req
         else:
             print(f"CamAgent is updating from {__version__} to {ref}. It checks first that this is an official, "
                   "signed release...")
+            from .release import DownloadFailed
             try:
                 print(f"Installed: {_install(repo, ref)}")
+            except DownloadFailed as e:
+                raise SystemExit(f"Not installed: {e}.\nGitHub, where CamAgent's releases are kept, didn't send the "
+                                 "files. CamAgent tried three times. Nothing on this computer changed. Check this "
+                                 "computer's internet connection, wait a few minutes, and try again.")
             except NotSigned as e:
                 raise SystemExit(f"Not installed: {e}.\nFor your safety, CamAgent only installs releases signed with "
                                  f"YonderView's release key. Nothing on this computer changed. Only if YonderView "
