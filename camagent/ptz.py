@@ -133,7 +133,10 @@ class PTZ:
             if not self.connected:
                 return
             try:
-                self.ptz.Stop({"ProfileToken": self.token, "PanTilt": True, "Zoom": True})
+                try:
+                    self.ptz.Stop({"ProfileToken": self.token, "PanTilt": True, "Zoom": True})
+                except Exception:  # noqa: BLE001 - some cameras without zoom refuse a Stop that names zoom
+                    self.ptz.Stop({"ProfileToken": self.token, "PanTilt": True})
             except Exception as e:
                 self._lost(e)
                 raise

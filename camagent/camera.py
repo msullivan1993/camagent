@@ -295,10 +295,20 @@ def ptz_move_test(host, port, user, password, token="", seconds=0.7):
     except Exception:  # noqa: BLE001
         before = None
 
+    def stop():
+        """Stop, and again without the zoom part for cameras that refuse it (no zoom)."""
+        try:
+            ptz.Stop({"ProfileToken": token, "PanTilt": True, "Zoom": True})
+        except Exception:  # noqa: BLE001
+            ptz.Stop({"ProfileToken": token, "PanTilt": True})
+
     def turn(x):
-        ptz.ContinuousMove({"ProfileToken": token, "Velocity": {"PanTilt": {"x": x, "y": 0.0}}})
-        time.sleep(seconds)
-        ptz.Stop({"ProfileToken": token, "PanTilt": True, "Zoom": True})
+        # the camera also stops by itself after about a second (Timeout), even if the Stop below never arrives
+        ptz.ContinuousMove({"ProfileToken": token, "Velocity": {"PanTilt": {"x": x, "y": 0.0}}, "Timeout": "PT1S"})
+        try:
+            time.sleep(seconds)
+        finally:
+            stop()
         time.sleep(1.5)                                    # let it settle before asking where it is
 
     turn(0.3)
@@ -307,7 +317,11 @@ def ptz_move_test(host, port, user, password, token="", seconds=0.7):
     except Exception:  # noqa: BLE001
         after = None
     back = False
-    if before is not None:
+    moved = bool(before and after and abs(after["pan"] - before["pan"]) > 0.003)
+    # Back to the exact spot only when the camera's position is real (it changed with the move). A camera that
+    # reports a fixed or made-up position would otherwise travel slowly toward that spot (seen 2026-11-08 on a
+    # no-name camera: a slow drift right after the test); it gets the same move the other way instead.
+    if moved:
         pos = {"PanTilt": {"x": before["pan"], "y": before["tilt"]}}
         if before["zoom"] is not None:
             pos["Zoom"] = {"x": before["zoom"]}
@@ -319,8 +333,7 @@ def ptz_move_test(host, port, user, password, token="", seconds=0.7):
     if not back:
         turn(-0.3)                                         # the same move the other way
         back = True
-    follows = bool(before and after and abs(after["pan"] - before["pan"]) > 0.003)
-    return {"before": before, "after": after, "follows": follows, "back": back}
+    return {"before": before, "after": after, "follows": moved, "back": back}
 
 
 # ---------- ffmpeg / ffprobe ----------

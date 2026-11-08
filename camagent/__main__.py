@@ -23,7 +23,26 @@ import sys
 from . import __version__
 
 
+def _no_quickedit():
+    """Windows: a click inside a console window ("QuickEdit") freezes the program until a key is pressed, so CamAgent
+    looked stuck after signing in (2026-11-08). Turn QuickEdit off for CamAgent's own window; copy and paste still
+    work with right-click. Nothing happens without a console (the service) or on Linux."""
+    import os
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        handle = k.GetStdHandle(-10)                       # the window's keyboard input
+        mode = ctypes.c_uint32()
+        if k.GetConsoleMode(handle, ctypes.byref(mode)):
+            k.SetConsoleMode(handle, (mode.value & ~0x0040) | 0x0080)   # QuickEdit off, keep the other settings
+    except Exception:  # noqa: BLE001 - never stop CamAgent over the window's settings
+        pass
+
+
 def main(argv=None):
+    _no_quickedit()
     ap = argparse.ArgumentParser(prog="camagent", description="CamAgent sends your cameras to YonderView. "
                                  "Run camagent with no command to see the menu.")
     ap.add_argument("--config", help="path to camagent.toml (default: the usual place)")

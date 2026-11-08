@@ -14,7 +14,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camagent import __version__, camera, config, configure, doctor, link, prereqs, remote, update  # noqa: E402
 
-assert __version__ == "0.21.0"
+assert __version__.startswith("0.21.")
 
 # ---- 1. lockout warning once, stop after 3 rejected tries ----
 configure._reset_login_tries()
@@ -108,17 +108,17 @@ with mock.patch.object(remote, "_account", return_value=site), \
 # ---- 4. update results on the Health tab ----
 with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "state_dir", return_value=Path(d)):
     assert prereqs.update_notice() == ""
-    update._record(False, "0.21.1", "the install didn't work (disk full)")
+    update._record(False, "0.99.1", "the install didn't work (disk full)")
     saved = json.loads((Path(d) / "update_result.json").read_text())
-    assert saved["ok"] is False and saved["version"] == "0.21.1" and abs(saved["at"] - time.time()) < 5
+    assert saved["ok"] is False and saved["version"] == "0.99.1" and abs(saved["at"] - time.time()) < 5
     note = prereqs.update_notice()
-    assert "couldn't update to 0.21.1" in note and "stayed on 0.21.0" in note and "disk full" in note
+    assert "couldn't update to 0.99.1" in note and f"stayed on {__version__}" in note and "disk full" in note
     assert "tries again tonight" in note and len(note) < 300
     assert note in prereqs.notices()
     saved["at"] -= 8 * 86400
     (Path(d) / "update_result.json").write_text(json.dumps(saved))
     assert prereqs.update_notice() == ""                          # older than 7 days
-    update._record(True, "0.21.1", "updated")
+    update._record(True, "0.99.1", "updated")
     assert prereqs.update_notice() == ""
     update._record(False, "0.20.0", "x")
     assert prereqs.update_notice() == ""                          # already newer than the failed one
@@ -190,3 +190,36 @@ with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "state_dir", 
     assert out["gpu"] == "vaapi" and "max_source" not in out
     assert "max_source" not in remote._info(None)["encoders"]
 print("v0.21 lockout, sign-in, helper, update notice, privacy, video test OK")
+
+# ---- 0.21.1: a camera that refuses a Stop naming zoom still stops; test moves carry a time limit ----
+from types import SimpleNamespace as _NS  # noqa: E402
+from camagent import camera as _camera  # noqa: E402
+
+
+class _NoZoomPTZ:
+    def __init__(self):
+        self.calls = []
+
+    def GetStatus(self, a):
+        return _NS(Position=_NS(PanTilt=_NS(x=0.0, y=0.0), Zoom=None))       # a fixed, made-up position
+
+    def ContinuousMove(self, a):
+        self.calls.append(("move", a["Velocity"]["PanTilt"]["x"], a.get("Timeout")))
+
+    def Stop(self, a):
+        if "Zoom" in a:
+            raise Exception("zoom not supported")
+        self.calls.append(("stop",))
+
+    def AbsoluteMove(self, a):
+        self.calls.append(("abs",))
+
+
+_f = _NoZoomPTZ()
+with mock.patch.object(_camera, "onvif_connect", lambda *a: _NS(create_ptz_service=lambda: _f)), \
+        mock.patch.object(_camera.time, "sleep", lambda s: None):
+    _r = _camera.ptz_move_test("h", 80, "u", "p", token="p1")
+assert _f.calls.count(("stop",)) == 2                     # both moves stopped, without the zoom part
+assert ("abs",) not in _f.calls                           # a made-up position: never "back to" it
+assert ("move", -0.3, "PT1S") in _f.calls and _r["follows"] is False
+print("v0.21.1 stop without zoom, no move back to a made-up position OK")

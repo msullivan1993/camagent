@@ -124,7 +124,8 @@ for follows, absolute in ((True, True), (False, True), (True, False)):
             mock.patch.object(camera.time, "sleep", lambda s: None):
         r = camera.ptz_move_test("h", 80, "u", "p", token="p1")
     assert r["follows"] is follows and r["back"] and abs(f.x - 0.2) < 1e-9, (follows, absolute, r, f.calls)
-    assert ("abs", 0.2) in f.calls if absolute else ("move", -0.3) in f.calls
+    # back to the exact spot only when the position is real (it followed the move); else the reverse move
+    assert ("abs", 0.2) in f.calls if (absolute and follows) else ("move", -0.3) in f.calls
 print("v0.17.10 login + move test OK")
 
 # ---- a refused ONVIF login is tried once, not twice ----
