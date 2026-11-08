@@ -282,8 +282,55 @@ def _connect(job):
     return out
 
 
+def _find_camera(slug):
+    """(main path, that camera's full settings) for a camera set up on this computer."""
+    if not config.CAMERA_ID.fullmatch(slug):
+        raise ValueError("That isn't a camera ID")
+    main_path = Path(_cfg_path or config.default_config_path())
+    _, cams, _ = config.load_all(main_path)
+    cam = next((c for c in cams if c["platform"].get("camera_id") == slug), None)
+    if cam is None:
+        raise ValueError("This camera isn't set up on this computer")
+    return main_path, cam
+
+
+def _restart_streaming():
+    from . import service
+    try:
+        if service.is_installed():
+            service.restart(remote=False)          # not this helper: it's still answering the website
+    except SystemExit as e:                        # the service functions stop with a message for the person
+        raise ValueError(str(e)) from None
+
+
+def _camera_settings(job):
+    """Turn a camera's sound or turn-and-zoom controls on or off (from its page on YonderView)."""
+    p = job.get("payload") or {}
+    slug = str(p.get("slug") or "")
+    main_path, cam = _find_camera(slug)
+    if isinstance(p.get("audio"), bool):
+        cam["stream"]["audio"] = p["audio"]
+    if isinstance(p.get("ptz"), bool):
+        cam["camera"]["ptz"] = p["ptz"]
+    config.save_camera(cam, main_path)
+    _restart_streaming()
+    log.info("camera %s settings changed from the website", slug)
+    return {"camera": slug, "audio": bool(cam["stream"].get("audio")), "ptz": bool(cam["camera"].get("ptz", True))}
+
+
+def _remove_camera(job):
+    """Take a camera off this computer (its settings file) and restart streaming without it."""
+    slug = str((job.get("payload") or {}).get("slug") or "")
+    main_path, cam = _find_camera(slug)
+    config.remove_camera(cam, main_path)
+    _restart_streaming()
+    log.info("camera %s removed from the website", slug)
+    return {"removed": slug}
+
+
 HANDLERS = {"discover": _discover, "inspect": _inspect, "snapshot": _snapshot, "ptz_test": _ptz_test,
-            "stage": _stage, "connect": _connect, "forget": _forget}
+            "stage": _stage, "connect": _connect, "forget": _forget, "camera_settings": _camera_settings,
+            "remove_camera": _remove_camera}
 
 
 # ---------- what this computer can do with video (0.20): measured once, told to the website ----------

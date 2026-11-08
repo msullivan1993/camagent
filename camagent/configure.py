@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from . import camera, config, guide, service
+from . import text as words
 
 
 # ---------- prompt helpers ----------
@@ -46,7 +47,7 @@ def choose(items, label, allow_none_text=None):
     if allow_none_text:
         print(f"  0. {allow_none_text}")
     while True:
-        v = input("Type a number and press Enter: ").strip()
+        v = input(words.P_TYPE_NUMBER).strip()
         if allow_none_text and v == "0":
             return None
         if v.isdigit() and 1 <= int(v) <= len(items):
@@ -54,7 +55,7 @@ def choose(items, label, allow_none_text=None):
         print(f"  Type a number from 1 to {len(items)}" + (", or 0." if allow_none_text else "."))
 
 
-TRY_FIX = "Let CamAgent try to change it for you (with CamAgent's own camera login)"
+TRY_FIX = words.TRY_FIX
 
 
 def _try_fix_stream(cam, max_height=1080):
@@ -134,20 +135,19 @@ def heading(text):
 
 def step_find_camera(cfg):
     cam = cfg["camera"]
-    heading("Step 1 of 4: Your camera")
+    heading(words.H_STEP1)
     guide.show(guide.CAMERA)
-    if yes("Do you want CamAgent to search this network for your camera? (Easiest; takes 3 seconds)",
-           default=not cam["host"]):
-        print("CamAgent is searching this network (3 seconds)...")
+    if yes(words.P_SEARCH, default=not cam["host"]):
+        print(words.P_SEARCHING)
         try:
             found = camera.discover()
         except OSError as e:
             found = []
             print(f"  The search didn't work ({e}). Type the camera's address below instead.")
         if found:
-            print("CamAgent found these cameras (IP address:port, then the camera's name). Which one is yours?")
+            print(words.P_FOUND)
             pick = choose(found, lambda c: f"{c['host']}:{c['port']}  {c['name']} {c['hardware']}".rstrip(),
-                          allow_none_text="None of these. I'll type the address myself")
+                          allow_none_text=words.P_NONE_OF_THESE)
             if pick:
                 cam["host"], cam["onvif_port"] = pick["host"], pick["port"]
         else:
@@ -155,13 +155,12 @@ def step_find_camera(cfg):
             print("  Also check that ONVIF (the camera's control and setup standard) is turned on in the camera.")
             print("  If your Wi-Fi has a guest network, put the camera and this computer on the same one.")
             print("  You can still type the camera's IP address below.")
-    cam["host"] = ask("Your camera's IP address (four numbers with dots, like 192.168.1.64)", cam["host"])
-    cam["onvif_port"] = ask_int("The camera's ONVIF port, the port for its control and setup standard (not sure? Press Enter for the usual one. Reolink cameras use 8000)",
-                                cam["onvif_port"])
-    print("  Next, enter your camera's login (not your YonderView login). The safest choice is a login just for")
-    print("  YonderView, with Operator rights. Operator rights let CamAgent turn and zoom the camera and use presets.")
-    print("  They don't let CamAgent change the camera's settings.")
-    keep = f"Keep the camera's current login ({cam['username']})" if cam.get("username") else None
+    cam["host"] = ask(words.P_IP, cam["host"])
+    cam["onvif_port"] = ask_int(words.P_ONVIF_PORT, cam["onvif_port"])
+    print(words.P_LOGIN_INTRO_1)
+    print(words.P_LOGIN_INTRO_2)
+    print(words.P_LOGIN_INTRO_3)
+    keep = words.P_KEEP_LOGIN.format(username=cam["username"]) if cam.get("username") else None
     how = choose([o for o in (keep, MAKE_LOGIN, OWN_LOGIN) if o], str)
     if how == keep:
         return
@@ -169,22 +168,13 @@ def step_find_camera(cfg):
         return
     print("  Enter the login you use for the camera's app or web page. Some cameras also need a separate")
     print("  user for ONVIF (the camera's control and setup standard).")
-    cam["username"] = ask("Camera's username", cam["username"])
-    cam["password"] = ask_secret("Camera's password", cam["password"])
+    cam["username"] = ask(words.P_USERNAME, cam["username"])
+    cam["password"] = ask_secret(words.P_PASSWORD, cam["password"])
 
 
-MAKE_LOGIN = (f"Let CamAgent make up a login (\"{camera.LOGIN_NAME}\" and a strong password) "
-              "for you to add on the camera (recommended)")
-OWN_LOGIN = "Use a login your camera already has"
-
-ADD_LOGIN_STEPS = """Open your camera's web page, sign in as its admin, and add this login. Menus vary by model:
-  * Amcrest / Dahua:  Setup > System > Account. Add it under ONVIF User. Also add it under
-                      Users (the normal list) so the map can show exact degrees.
-  * Hikvision:        Configuration > Network > Advanced Settings > Integration Protocol > Add
-  * Reolink:          Settings > Users > Add User
-  * Others: look for Users or ONVIF User under System, Security or Network.
-Rights: choose Operator (or a User allowed to use PTZ, which means turn and zoom).
-Don't choose Administrator. YonderView doesn't need it."""
+MAKE_LOGIN = words.MAKE_LOGIN.format(login_name=camera.LOGIN_NAME)
+OWN_LOGIN = words.OWN_LOGIN
+ADD_LOGIN_STEPS = words.ADD_LOGIN_STEPS
 
 
 def _make_login(cam):
@@ -282,12 +272,12 @@ NO_ONVIF = "Continue without ONVIF (CamAgent tries to find your camera's video a
 def step_pick_stream(cfg, ffprobe):
     """Returns False if the user wants to go back and re-enter the camera's details."""
     cam = cfg["camera"]
-    heading("Step 2 of 4: The camera's video")
+    heading(words.H_STEP2)
     guide.show(guide.STREAM)
     if _login_state["tries"] >= MAX_LOGIN_TRIES:
         _stop_for_lockout()
     _warn_lockout()
-    print("CamAgent is asking your camera what video it can send (this can take up to a minute)...")
+    print(words.P_ASKING_CAMERA)
     try:
         info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
         if info.get("login_level") == "Administrator":
@@ -440,8 +430,8 @@ def step_check_stream(cfg, ffprobe):
     return "ok"
 
 
-SIGN_IN = "Sign in to YonderView and pick your camera (easiest)"
-PASTE = "Paste the connection settings from your camera's Connection page"
+SIGN_IN = words.SIGN_IN
+PASTE = words.PASTE
 
 
 def _use_block(cfg, block):
@@ -465,13 +455,13 @@ def account_token(main_path=None, sign_in_if_needed=True):
         return site, acct["token"], acct.get("name", "")
     if not sign_in_if_needed:
         return site, None, ""
-    print("\nWhen you sign in, this computer links to your YonderView account. Then CamAgent can get your")
-    print("cameras' connection settings. You sign in on the website. CamAgent never sees your password.")
+    print(words.SIGNIN_INTRO_1)
+    print(words.SIGNIN_INTRO_2)
     token, name = link.sign_in(site)
     acct.update(token=token, name=name)
     config.save_main(main, main_path)
-    print(f"  You're signed in as {name or 'your account'}. (You can unlink this computer any time from your profile")
-    print("  on the website.)")
+    print(words.SIGNIN_DONE_1.format(name=name or words.S_ACCOUNT_FALLBACK))
+    print(words.SIGNIN_DONE_2)
     return site, token, name
 
 
@@ -481,14 +471,14 @@ def sign_out(main_path=None):
     main = config.load_or_defaults(main_path)
     acct = main["account"]
     if not acct.get("token"):
-        print("You haven't signed in to YonderView on this computer.")
+        print(words.NOT_SIGNED_IN)
         return
     site = acct.get("site") or link.DEFAULT_SITE
     revoked = link.sign_out(site, acct["token"])
     acct.update(token="", name="")
     config.save_main(main, main_path)
     if revoked:
-        print("You're signed out. This computer's sign-in no longer works, here or anywhere.")
+        print(words.SIGNOUT_DONE)
     else:
         print("You're signed out on this computer, but CamAgent couldn't reach YonderView to cancel the sign-in there.")
         print(f"To be sure, open {site.rstrip('/')}/link. Unlink this computer in the \"Your computers\" list.")
@@ -574,17 +564,18 @@ def step_convert(cfg, ffmpeg):
     if height <= convert.TARGET_HEIGHT and not h265:
         s["convert"] = "off"
         return
-    heading("Optional: make the video 1080p")
+    heading(words.H_CONVERT)
     what = f"{height}p" if height else "an unknown size"
-    print(f"Your camera sends {what}{' in H.265' if h265 else ''}. YonderView takes 1080p in H.264.")
-    print("Bigger video is a paid option, and YonderView must approve it.")
-    print("CamAgent can convert the video to 1080p H.264 on this computer before it sends the video.")
-    print("This doesn't change your camera. A mini PC with an Intel graphics chip does this easily.")
-    print("Without one, this computer needs a strong processor.")
-    here = "Convert the video to 1080p H.264 on this computer (recommended)"
-    source = f"Send your camera's own {what} (only if YonderView approved it for this camera)"
-    camera_side = "I'll change the camera's setting to 1080p H.264 myself"
+    print(words.C_YOUR_CAMERA.format(what=what, codec=words.C_H265 if h265 else ""))
+    print(words.C_INFO_1)
+    print(words.C_INFO_2)
+    print(words.C_INFO_3)
+    here = words.C_HERE
+    source = words.C_SOURCE.format(what=what)
+    camera_side = words.C_CAMERA_SIDE
     options = [here, camera_side] + ([] if h265 else [source]) + [TRY_FIX]
+    if not h265:
+        print(words.C_BANDWIDTH)                                   # about "Send your camera's own ..."
     pick = choose(options, str)
     if pick == TRY_FIX:
         if _try_fix_stream(cfg, max_height=convert.TARGET_HEIGHT):
@@ -650,7 +641,7 @@ def step_versions(cfg, ffmpeg):
     s = cfg["stream"]
     if s.get("versions") == "off" or not ffmpeg:
         return
-    heading("The lower qualities (720p and 480p)")
+    heading(words.H_VERSIONS)
     print("Viewers on phones and slow connections watch a 720p or 480p copy of your video.")
     print("YonderView prefers that this computer makes them. Then your internet sends about 3 Mbps more (fine on cable or fiber; skip it on satellite or capped internet).")
     print("Otherwise YonderView's server makes them.")
@@ -679,9 +670,9 @@ def step_versions(cfg, ffmpeg):
 
 def step_platform(cfg, main_path=None):
     p, s = cfg["platform"], cfg["stream"]
-    heading("Step 3 of 4: Your YonderView account")
+    heading(words.H_STEP3)
     guide.show(guide.SERVER)
-    typed = "Type the values one by one (only if YonderView support asks you to)"
+    typed = words.TYPED
     how = choose([SIGN_IN, PASTE, typed], str)
     if how == SIGN_IN and _from_account(cfg, main_path):
         p["mqtt_port"] = int(p["mqtt_port"])
@@ -821,27 +812,26 @@ def _walk(cam, ffmpeg, ffprobe, main_path=None):
 def _finish(cam, main_path, others):
     cid = cam["platform"]["camera_id"]
     clash = next((o for o in others if o["platform"]["camera_id"] == cid), None)
-    if clash and not yes(f"Camera '{cid}' is already set up on this computer. Do you want to replace its settings?",
-                         default=False):
-        raise SystemExit("Canceled. CamAgent saved nothing.")
+    if clash and not yes(words.F_REPLACE.format(cid=cid), default=False):
+        raise SystemExit(words.F_CANCELED)
 
     while True:
-        heading("Step 4 of 4: Testing the connection")
+        heading(words.H_STEP4)
         ok, msg = test_mqtt(cam)
-        print(f"  YonderView: {msg}")
+        print(words.F_YV.format(msg=msg))
         if ok:
             limit = (cam.get("_server") or {}).get("max_height")
             height = (cam.get("_measure") or {}).get("height")
             if cam["stream"].get("convert", "off") != "off":
                 height = min(height or 1080, 1080)                # what's sent: the converted 1080p
             if limit and height and height > limit:
-                print(f"\n  Your video is {height}p, but YonderView's limit for this camera is {limit}p.")
-                print("  YonderView would decline (refuse) the video as soon as it connects.")
-                print("  Change it yourself in the camera's web page: find the Video (or Encode) settings, set the "
-                      f"Resolution to {limit}p or lower,")
-                print("  and save. Then choose \"I've changed the camera. Check again\".")
-                other, recheck = "Pick a different video from the camera", "I've changed the camera. Check again"
-                keep = "Save anyway (not recommended: YonderView declines the video until you fix this)"
+                print(words.F_OVER_LIMIT_1.format(height=height, limit=limit))
+                print(words.F_OVER_LIMIT_2)
+                print(words.F_OVER_LIMIT_5.format(limit=limit))
+                print(words.F_OVER_LIMIT_3.format(limit=limit))
+                print(words.F_OVER_LIMIT_4)
+                other, recheck = words.F_OTHER, words.F_RECHECK
+                keep = words.F_KEEP
                 pick = choose([other, recheck, keep, TRY_FIX], str)
                 if pick == TRY_FIX:
                     _try_fix_stream(cam, max_height=limit)
@@ -853,21 +843,21 @@ def _finish(cam, main_path, others):
                     _measure_again(cam)
                     continue
             break
-        print("  Check this computer's internet connection first. If that's fine, get the YonderView settings again.")
-        again = "Enter the YonderView details again"
-        anyway = "Save anyway (not recommended: CamAgent can't connect until you fix this)"
-        pick = choose([again, anyway, "Cancel without saving"], str)
+        print(words.F_CHECK_NET)
+        again = words.F_AGAIN
+        anyway = words.F_ANYWAY
+        pick = choose([again, anyway, words.F_CANCEL], str)
         if pick == again:
             step_platform(cam, main_path)
             continue
         if pick == anyway:
             break
-        raise SystemExit("Canceled. CamAgent saved nothing.")
+        raise SystemExit(words.F_CANCELED)
 
     if clash and Path(clash["_source"]) != Path(cam.get("_source") or ""):
         config.remove_camera(clash, main_path)
     saved = config.save_camera(cam, main_path)
-    print(f"\nCamAgent saved camera '{cid}'.  ({saved})")
+    print(words.F_SAVED.format(cid=cid, saved=saved))
     _apply(main_path)
     guide.show(guide.DONE)
 
@@ -984,9 +974,9 @@ def add(config_path=None):
     if n == 1:
         guide.show(guide.INTRO)
     else:
-        print(f"Adding camera #{n} on this computer. To keep a value shown in [brackets], press Enter.")
-        print("You need this camera's IP address and login.")
-        print("You also need to sign in to YonderView (or have its connection settings).")
+        print(words.ADD_N_1.format(n=n))
+        print(words.ADD_N_2)
+        print(words.ADD_N_3)
     _check_clock()
     ffmpeg, ffprobe = _tools(cam)
     _walk(cam, ffmpeg, ffprobe, main_path)
@@ -1096,7 +1086,7 @@ def weather_station(config_path=None, camera_id=None):
     if cam is None:
         return
     w = cam["weather"]
-    heading("Weather station (beta)")
+    heading(words.H_WEATHER)
     print("CamAgent can read a weather station on this network and show its conditions on your camera's page.")
     print("CamAgent works with Tempest, Davis WeatherLink Live and Ecowitt gateways (GW1100, GW2000 and similar).")
     if w.get("kind"):

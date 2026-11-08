@@ -61,6 +61,8 @@ DEFAULTS = {
         "max_move_ms": 2000,
         "telemetry_interval_s": 30,
         "stale_command_s": 5,
+        "mode": "",                    # how cameras are set up: "website" (yonderview.net/link), "local" (this
+                                       # computer's menu), or blank = not chosen yet (0.22)
         "windows_account": "system",   # Windows: the account the service runs as: system (default, as before
                                        # 0.17), or the limited "limited" / "localservice" (opt-in, 0.17.4)
     },

@@ -48,6 +48,28 @@ SEEN_REQ_MAX = 500
 CONTROL_OPS = {"focus", "autofocus", "daynight", "aux", "home", "reboot", "sync_clock", "point", "probe"}
 
 
+def _num(v):
+    try:
+        return None if v is None or isinstance(v, bool) else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_limits(raw):
+    """The host's limits from the config message: None, or {"pan": (min, max)|None, "tilt": ..., "zoom_max": n|None}."""
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for key in ("pan", "tilt"):
+        r = raw.get(key)
+        if isinstance(r, (list, tuple)) and len(r) == 2 and None not in map(_num, r):
+            out[key] = (min(map(float, r)), max(map(float, r)))
+        else:
+            out[key] = None
+    out["zoom_max"] = _num(raw.get("zoom_max"))
+    return out if any(v is not None for v in out.values()) else None
+
+
 class CameraAgent:
     def __init__(self, cfg: dict):
         missing = missing_settings(cfg)
@@ -61,6 +83,9 @@ class CameraAgent:
         self.stopping = threading.Event()
         self.mqtt_connected = False
         self.server = {"max_height": None, "declined": ""}
+        self.ptz_limits = None         # the host's turn-and-zoom limits (None: no limits); never apply to owners
+        self._limit_watch = 0          # which limited move is being watched (older watchers stop)
+        self._limits_noted = False
 
         self.uplink = Uplink(cfg) if cfg["stream"].get("enabled", True) else None
         self.versions = None
@@ -203,6 +228,7 @@ class CameraAgent:
         if self.ptz:
             self.ptz.settings.update({k: bool(new.get(k, False)) for k in ("invert_pan", "invert_tilt")})
             self.log.info("camera settings: %s", self.ptz.settings)
+        self.ptz_limits = _parse_limits(new.get("ptz_limits"))
         max_height = new.get("max_height")
         self.server = {"max_height": max_height if isinstance(max_height, int) and not isinstance(max_height, bool)
                        else None, "declined": str(new.get("declined") or "")[:500]}
@@ -253,6 +279,8 @@ class CameraAgent:
             return self._info()
         if op in self.TOOL_OPS:
             return self._tool(op, cmd.get("req"))
+        if op == "point" and self._limited(cmd):
+            self._check_point(cmd)
         if op in CONTROL_OPS:
             return self._control(op, cmd)
         if op == "versions":                    # the website wants lower-quality versions made here (or not)
@@ -264,10 +292,18 @@ class CameraAgent:
         if not self.ptz:
             raise RuntimeError("Turn and zoom (PTZ) is turned off for this camera")
         if op == "move":
-            return self.ptz.move(cmd.get("pan", 0), cmd.get("tilt", 0), cmd.get("zoom", 0), cmd.get("ms", 400))
+            limited = self._limited(cmd)
+            if limited:
+                self._check_move(cmd)
+            result = self.ptz.move(cmd.get("pan", 0), cmd.get("tilt", 0), cmd.get("zoom", 0), cmd.get("ms", 400))
+            if limited:
+                self._watch_limits(cmd)
+            return result
         if op == "stop":
             return self.ptz.stop()
         if op == "preset":
+            if self._limited(cmd):
+                self._check_preset(cmd["id"])
             return self.ptz.goto_preset(cmd["id"])
         if op == "presets":
             return self.ptz.presets()
@@ -278,6 +314,102 @@ class CameraAgent:
         if op == "preset_delete":
             return self.ptz.delete_preset(cmd["id"])
         raise ValueError(f"unknown op: {op}")
+
+    # ---------- limits the camera's host set on turning and zooming (owners are never limited) ----------
+    OUTSIDE = "That's outside the area the camera's host allows."
+
+    def _limited(self, cmd):
+        """True when this command comes from someone the host's limits apply to, and limits are set."""
+        return bool(cmd.get("limited") is True and self.ptz_limits)
+
+    def _can_enforce(self):
+        if self.position_kind == "fake" or getattr(self.ptz, "reports_position", None) is False:
+            if not self._limits_noted:
+                self._limits_noted = True
+                self.log.info("this camera doesn't report where it points: the host's turn-and-zoom limits can't "
+                              "be enforced on it")
+            return False
+        return True
+
+    @staticmethod
+    def _outside(lim, pan, tilt, zoom):
+        for key, v in (("pan", pan), ("tilt", tilt)):
+            r = lim.get(key)
+            if r and v is not None and not (r[0] <= v <= r[1]):
+                return True
+        zmax = lim.get("zoom_max")
+        return zmax is not None and zoom is not None and zoom > zmax
+
+    def _check_point(self, cmd):
+        tilt = cmd.get("tilt")
+        if self._outside(self.ptz_limits, _num(cmd.get("pan", 0)), _num(tilt if tilt is not None else 0.0),
+                         _num(cmd.get("zoom"))):
+            raise RuntimeError(self.OUTSIDE)
+
+    def _check_preset(self, token):
+        try:
+            found = next((p for p in self.ptz.presets() if str(p.get("token")) == str(token)), None)
+        except Exception:  # noqa: BLE001 - can't tell where it points: allow it
+            return
+        if found and "pan" in found and self._outside(self.ptz_limits, found.get("pan"), found.get("tilt"),
+                                                      found.get("zoom")):
+            raise RuntimeError(self.OUTSIDE)
+
+    def _raw_velocity(self, cmd):
+        """The move's pan/tilt/zoom as the camera gets them (after the host's inversion), to compare with the
+        camera's own position reports."""
+        pan, tilt = _num(cmd.get("pan", 0)) or 0.0, _num(cmd.get("tilt", 0)) or 0.0
+        if self.ptz.settings.get("invert_pan"):
+            pan = -pan
+        if self.ptz.settings.get("invert_tilt"):
+            tilt = -tilt
+        return pan, tilt, _num(cmd.get("zoom", 0)) or 0.0
+
+    @staticmethod
+    def _past_edge(lim, pos, vel):
+        """The first edge the camera is at or past while the move pushes further that way, else None."""
+        for key, v in (("pan", vel[0]), ("tilt", vel[1])):
+            r, at = lim.get(key), pos.get(key)
+            if r and at is not None and v and ((v > 0 and at >= r[1]) or (v < 0 and at <= r[0])):
+                return key
+        zmax, z = lim.get("zoom_max"), pos.get("zoom")
+        if zmax is not None and z is not None and vel[2] > 0 and z >= zmax:
+            return "zoom"
+        return None
+
+    def _check_move(self, cmd):
+        vel = self._raw_velocity(cmd)
+        if vel == (0.0, 0.0, 0.0) or not self._can_enforce():
+            return
+        pos = self.ptz.position()
+        if pos and self._past_edge(self.ptz_limits, pos, vel):
+            raise RuntimeError(self.OUTSIDE)
+
+    def _watch_limits(self, cmd):
+        """While a limited move runs, read the position every ~250 ms and stop the camera at the edge."""
+        vel = self._raw_velocity(cmd)
+        if vel == (0.0, 0.0, 0.0) or not self._can_enforce():
+            return
+        self._limit_watch += 1
+        mine, lim = self._limit_watch, self.ptz_limits
+        seconds = min(float(_num(cmd.get("ms", 400)) or 400), self.ptz.max_move_ms) / 1000 + 0.5
+
+        def watch():
+            end = time.monotonic() + seconds
+            while time.monotonic() < end and mine == self._limit_watch and not self.stopping.is_set():
+                time.sleep(self.LIMIT_POLL_S)
+                if mine != self._limit_watch:
+                    return
+                pos = self.ptz.position()
+                if pos and self._past_edge(lim, pos, vel):
+                    try:
+                        self.ptz.stop()
+                    except Exception as e:  # noqa: BLE001
+                        self.log.warning("couldn't stop the camera at the host's limit: %s", e)
+                    return
+        threading.Thread(target=watch, daemon=True, name=f"limits-{self.cam_id}").start()
+
+    LIMIT_POLL_S = 0.25
 
     def _control(self, op, cmd):
         c = self.controls

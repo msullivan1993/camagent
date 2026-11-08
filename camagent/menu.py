@@ -3,8 +3,9 @@ import os
 import subprocess
 import sys
 from collections import deque
+from pathlib import Path
 
-from . import __version__, config, service
+from . import __version__, config, service, text
 
 
 def _elevate_or_explain() -> bool:
@@ -133,7 +134,9 @@ def _account_label(config_path=None):
         acct = config.load_or_defaults(config_path)["account"]
     except Exception:  # noqa: BLE001
         return ""
-    return f"signed in as {acct.get('name') or 'your account'}" if acct.get("token") else "not signed in"
+    if acct.get("token"):
+        return text.S_ACCOUNT_IN.format(name=acct.get("name") or text.S_ACCOUNT_FALLBACK)
+    return text.S_ACCOUNT_OUT
 
 
 def _do(label, action):
@@ -145,14 +148,14 @@ def _do(label, action):
         if e.code not in (None, 0) and not isinstance(e.code, int):
             print(e.code)
     except (KeyboardInterrupt, EOFError):
-        print("\nCanceled. Nothing was changed.")
+        print(text.MENU_CANCELED)
     except Exception as e:  # noqa: BLE001
-        print(f"Something went wrong: {e}")
-        print('To look for the cause, choose "Check for problems" (4) in the menu.')
-        print('Still stuck? Choose "Report a problem" on yonderview.net and include the message above.')
+        print(text.MENU_WENT_WRONG.format(error=e))
+        print(text.MENU_WENT_WRONG_2)
+        print(text.MENU_WENT_WRONG_3)
 
 
-def _choose(title, actions, back="Quit"):
+def _choose(title, actions, back=text.MENU_QUIT):
     """Print a numbered list; returns the chosen (label, action), or None for 0 / Enter. An entry whose action is
     None is a heading: printed, not numbered."""
     if title:
@@ -166,17 +169,17 @@ def _choose(title, actions, back="Quit"):
         print(f"  {len(numbered)}. {label}")
     print(f"\n  0. {back}")
     while True:
-        choice = input("Type a number and press Enter: ").strip()
+        choice = input(text.MENU_PROMPT).strip()
         if choice in ("0", "q", "quit", "exit", "back", "b", ""):
             return None
         if choice.isdigit() and 1 <= int(choice) <= len(numbered):
             return numbered[int(choice) - 1]
-        print(f"Type a number from 1 to {len(numbered)}, or 0 to {back.lower()}.")
+        print(text.MENU_PICK_AGAIN.format(n=len(numbered), back=back.lower()))
 
 
 def _submenu(title, actions):
     """A group of related actions: pick one (it runs), or 0 / Enter to go back."""
-    picked = _choose(f"\n--- {title} ---", actions, back="Go back")
+    picked = _choose(f"\n--- {title} ---", actions, back=text.MENU_BACK)
     if picked:
         _do(*picked)
         return True
@@ -191,70 +194,282 @@ def _sign_out(config_path=None):
         print("Canceled. Nothing was changed.")
 
 
+def _cameras_text(n):
+    return text.S_CAMERA_ONE if n == 1 else text.S_CAMERAS_N.format(n=n)
+
+
+def _problems_text(n):
+    return text.S_PROBLEM_ONE if n == 1 else text.S_PROBLEMS_N.format(n=n)
+
+
+def _running_text(state):
+    return {"running": text.S_RUNNING, "stopped": text.S_STOPPED,
+            "not installed": text.S_NOT_INSTALLED}.get(state, text.S_OTHER_STATE.format(state=state))
+
+
 def _status_lines(cams, state, problems, config_path=None):
     """The few lines above the menu: how things stand, and the one thing to do next if something's missing."""
-    running = {"running": "CamAgent is running", "stopped": "CamAgent is stopped",
-               "not installed": "CamAgent isn't running yet"}.get(state, f"CamAgent: {state}")
-    n = len(cams)
-    lines = [f"{n} camera{'s' if n != 1 else ''}  |  {running}  |  YonderView: {_account_label(config_path)}"]
+    lines = [text.S_LINE.format(cams=_cameras_text(len(cams)), running=_running_text(state),
+                                account=_account_label(config_path))]
     if problems:
-        n_p = len(problems)
-        lines.append(f"! CamAgent found {n_p} problem{'s' if n_p != 1 else ''} with your saved settings."
-                     " Choose 4 (Check for problems) to see what's wrong and how to fix it.")
+        lines.append(text.S_PROBLEMS.format(problems=_problems_text(len(problems))))
     elif not cams:
-        lines.append("You haven't added a camera yet. Choose 2 to add one.")
+        lines.append(text.S_NO_CAMERAS)
     elif state == "not installed":
-        lines.append("Next, choose 5 to start CamAgent. CamAgent then keeps sending your cameras in the background.")
-        lines.append("It starts by itself whenever this computer turns on.")
+        lines.append(text.S_NEXT_START)
+        lines.append(text.S_NEXT_START_2)
     elif state == "stopped":
-        lines.append("CamAgent is stopped, so it isn't sending your cameras. Choose 5 to start it again.")
+        lines.append(text.S_STOPPED_NOTE)
     return lines
+
+
+# ---------- the two ways to set up (0.22) ----------
+
+WEBSITE, LOCAL = "website", "local"
+
+
+def get_mode(config_path=None, cams=None):
+    """"website", "local", or "" (not chosen yet, and no cameras here). A computer that already has cameras
+    counts as "local", so nothing changes for hosts who set up before the two ways existed."""
+    try:
+        mode = str(config.load_or_defaults(config_path)["agent"].get("mode") or "").strip().lower()
+    except Exception:  # noqa: BLE001
+        mode = ""
+    if mode in (WEBSITE, LOCAL):
+        return mode
+    if cams is None:
+        try:
+            cams = config.load_all(config_path)[1]
+        except Exception:  # noqa: BLE001
+            cams = []
+    return LOCAL if cams else ""
+
+
+def set_mode(mode, config_path=None):
+    """Remember the way to set up in camagent.toml. Changes nothing else (no cameras are removed)."""
+    main = config.load_or_defaults(config_path)
+    main["agent"]["mode"] = mode
+    config.save_main(main, config_path)
+
+
+def ask_mode(config_path=None):
+    """The first-run question. Returns the chosen mode (also saved), or None if the person quits."""
+    print(f"\n{text.MODE_WELCOME}")
+    print(text.MODE_QUESTION)
+    print(f"\n  1. {text.MODE_WEBSITE}\n     {text.MODE_WEBSITE_ABOUT}")
+    print(f"  2. {text.MODE_LOCAL}\n     {text.MODE_LOCAL_ABOUT}")
+    print(f"\n{text.MODE_SWITCH_NOTE}")
+    while True:
+        choice = input(text.MODE_PROMPT).strip().lower()
+        if choice in ("0", "q", "quit", "exit"):
+            return None
+        if choice in ("1", "2"):
+            mode = WEBSITE if choice == "1" else LOCAL
+            set_mode(mode, config_path)
+            return mode
+        print(text.MODE_RETRY)
+
+
+def _switch(mode, config_path=None):
+    set_mode(mode, config_path)
+    print(text.SWITCHED_TO_WEBSITE if mode == WEBSITE else text.SWITCHED_TO_LOCAL)
+
+
+def _site(config_path=None):
+    from . import link
+    try:
+        site = config.load_or_defaults(config_path)["account"].get("site") or link.DEFAULT_SITE
+    except Exception:  # noqa: BLE001
+        site = link.DEFAULT_SITE
+    return site.rstrip("/")
+
+
+def _link_address(config_path=None):
+    """The address people open to set up cameras, without https:// (yonderview.net/link)."""
+    return _site(config_path).split("://", 1)[-1] + "/link"
+
+
+def _open_link(config_path=None):
+    url = _site(config_path) + "/link"
+    print(text.W_OPEN_PRINT)
+    print(f"\n  {url}\n")
+    if not config.load_or_defaults(config_path)["account"].get("token"):
+        print(text.W_OPEN_SIGNED_OUT)
+    if os.name == "nt":
+        try:
+            import webbrowser
+            if webbrowser.open(url):
+                print(text.W_OPENING)
+        except Exception:  # noqa: BLE001 - the address above is enough
+            pass
+
+
+def _website_ready(config_path=None):
+    """Website mode needs this computer linked to the account, the website setup helper running (it does the
+    work the website asks for) and, once there are cameras, the main background service. With no cameras the
+    helper alone is installed: the main service has nothing to send, and the helper starts it with the first
+    camera. Safe to run again: it only installs what's missing."""
+    from . import configure
+    path = Path(config_path or config.default_config_path())
+    if not path.exists():
+        config.save_main(config.load_or_defaults(path), path)     # the helper and the service need the file
+    configure.account_token(path)                                  # signs in now if needed
+    try:
+        cams = config.load_all(path)[1]
+    except Exception:  # noqa: BLE001
+        cams = []
+    if cams and not service.is_installed():
+        service.install(path)                                      # also installs the helper
+    elif not service.remote_installed():
+        service.install_remote(path)
+
+
+def _website_status_lines(cams, state, problems, config_path, numbers, signed_in):
+    address = _link_address(config_path)
+    lines = [text.W_STATE_LINE.format(account=_account_label(config_path), running=_running_text(state),
+                                      cams=_cameras_text(len(cams)))]
+    if problems:
+        lines.append(text.W_PROBLEMS.format(problems=_problems_text(len(problems)), number=numbers[text.W_CHECK]))
+    elif not signed_in:
+        lines.append(text.W_NEED_SIGN_IN.format(number=numbers[text.W_SIGN_IN], address=address))
+    elif not cams:
+        lines.append(text.W_NO_CAMERAS.format(address=address))
+    return lines
+
+
+def signed_in_label(config_path=None):
+    try:
+        return bool(config.load_or_defaults(config_path)["account"].get("token"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _website_menu(config_path, state):
+    """One round of the website-mode menu. Returns False to leave CamAgent."""
+    from . import configure, doctor
+    try:
+        _, cams, problems = config.load_all(config_path)
+    except Exception as e:  # noqa: BLE001
+        cams, problems = [], [str(e)]
+    signed_in = signed_in_label(config_path) if not problems else False
+    update_tools = _update_tools(config_path, configure)
+    address = _link_address(config_path)
+    actions = [
+        (text.W_HEAD_SET_UP, None),
+        (text.W_OPEN_LINK.format(address=address), lambda: _open_link(config_path)),
+        (text.W_CAMERAS, lambda: configure.list_cameras(config_path)),
+        (text.W_HEAD_HELP, None),
+        (text.W_CHECK, lambda: doctor.run(config_path)),
+        (text.W_LOG, show_log),
+        (text.W_HEAD_SETTINGS, None),
+        (text.W_SIGN_OUT if signed_in else text.W_SIGN_IN,
+         (lambda: _sign_out(config_path)) if signed_in else (lambda: configure.account_token(config_path))),
+        (text.W_UPDATES, (text.SUB_UPDATES, update_tools)),
+        (text.W_SWITCH_TO_LOCAL, lambda: _switch(LOCAL, config_path)),
+    ]
+    numbers = {label: n for n, (label, _) in enumerate([a for a in actions if a[1] is not None], 1)}
+    numbers[text.W_SIGN_IN] = numbers.get(text.W_SIGN_IN) or numbers[text.W_SIGN_OUT]
+    print(f"\n{text.MENU_TITLE.format(version=__version__)}")
+    for line in _website_status_lines(cams, state, problems, config_path, numbers, signed_in):
+        print(line)
+    picked = _choose("", actions)
+    if picked is None:
+        return False
+    reopen_if_updated(config_path)
+    label, action = picked
+    if isinstance(action, tuple):
+        if not _submenu(*action):
+            return True
+    else:
+        _do(label, action)
+        if label == text.W_SWITCH_TO_LOCAL:
+            return True                                    # redraw in the other mode, no pause
+    try:
+        input(text.MENU_PRESS_ENTER)
+    except (KeyboardInterrupt, EOFError):
+        return False
+    return True
+
+
+def _update_tools(config_path, configure):
+    return [
+        (text.SUB_UPDATE_NOW, lambda: _update_and_relaunch(config_path)),
+        (text.SUB_AUTO_ON if _auto_on(config_path) else text.SUB_AUTO_OFF,
+         lambda: configure.toggle_auto_update(config_path)),
+    ]
+
+
+def _get_ready(config_path):
+    """Website mode's first step each time CamAgent opens: sign in, install what's missing. Never crashes."""
+    print(f"\n{text.W_WORKING}")
+    try:
+        _website_ready(config_path)
+    except (KeyboardInterrupt, EOFError):
+        print(text.MENU_CANCELED)
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            print(text.W_SETUP_FAILED.format(error=e.code))
+            print(text.W_SETUP_RETRY)
+    except Exception as e:  # noqa: BLE001
+        print(text.W_SETUP_FAILED.format(error=e))
+        print(text.W_SETUP_RETRY)
 
 
 def run(config_path=None):
     if not _elevate_or_explain():
         return
     from . import configure, controls, doctor
+    if not get_mode(config_path):                     # first run: no cameras and no way chosen yet
+        if not ask_mode(config_path):
+            return
+    ready = False
     while True:
         reopen_if_updated(config_path)
+        mode = get_mode(config_path) or LOCAL
+        state = _service_state()
+        if mode == WEBSITE:
+            if not ready:
+                _get_ready(config_path)
+                ready = True
+                state = _service_state()
+            if not _website_menu(config_path, state):
+                return
+            continue
+        ready = False                                  # coming back to website mode later checks again
         try:
             _, cams, problems = config.load_all(config_path)
         except Exception as e:  # noqa: BLE001
             cams, problems = [], [str(e)]
-        state = _service_state()
         installed = state != "not installed"
         signed_in = bool(config.load_or_defaults(config_path)["account"].get("token")) if not problems else False
         camera_tools = [
-            ("Change a camera's settings", lambda: configure.run(config_path)),
-            ("Add or change a weather station (beta)", lambda: configure.weather_station(config_path)),
-            ("Remove a camera from this computer", lambda: configure.remove(config_path)),
+            (text.SUB_CHANGE_CAMERA, lambda: configure.run(config_path)),
+            (text.SUB_WEATHER, lambda: configure.weather_station(config_path)),
+            (text.SUB_REMOVE, lambda: configure.remove(config_path)),
         ]
-        update_tools = [
-            ("Update CamAgent now", lambda: _update_and_relaunch(config_path)),
-            ("Automatic nightly updates are " + ("on. Turn them off" if _auto_on(config_path) else "off. Turn them on"),
-             lambda: configure.toggle_auto_update(config_path)),
-        ]
+        update_tools = _update_tools(config_path, configure)
         advanced_tools = [
-            ("Search the network for cameras", _discover),
-            ("See what a camera can do (focus, day/night, wiper...)", lambda: controls.cli_probe(config_path)),
+            (text.SUB_SEARCH, _discover),
+            (text.SUB_PROBE, lambda: controls.cli_probe(config_path)),
         ]
         actions = [
-            ("Cameras", None),
-            ("See if your cameras are working", lambda: configure.list_cameras(config_path)),
-            ("Add a camera", lambda: configure.add(config_path)),
-            ("Change or remove a camera...", ("Change or remove a camera", camera_tools)),
-            ("If something's wrong", None),
-            ("Check for problems", lambda: doctor.run(config_path)),
-            ("Restart CamAgent" if installed else "Start CamAgent (runs in the background, starts with this computer)",
+            (text.HEAD_CAMERAS, None),
+            (text.M_LIST, lambda: configure.list_cameras(config_path)),
+            (text.M_ADD, lambda: configure.add(config_path)),
+            (text.M_CHANGE_OR_REMOVE, (text.SUB_CHANGE_OR_REMOVE, camera_tools)),
+            (text.HEAD_WRONG, None),
+            (text.M_CHECK, lambda: doctor.run(config_path)),
+            (text.M_RESTART if installed else text.M_START,
              service.restart if installed else (lambda: service.install(config_path))),
-            ("Show the recent log (useful for support)", show_log),
-            ("Settings", None),
-            ("Sign out of YonderView" if signed_in else "Sign in to YonderView",
+            (text.M_LOG, show_log),
+            (text.HEAD_SETTINGS, None),
+            (text.M_SIGN_OUT if signed_in else text.M_SIGN_IN,
              (lambda: _sign_out(config_path)) if signed_in else (lambda: configure.account_token(config_path))),
-            ("Updates...", ("Updates", update_tools)),
-            ("Advanced tools...", ("Advanced tools", advanced_tools)),
+            (text.M_UPDATES, (text.SUB_UPDATES, update_tools)),
+            (text.M_ADVANCED, (text.SUB_ADVANCED, advanced_tools)),
+            (text.M_SWITCH_TO_WEBSITE, lambda: _switch(WEBSITE, config_path)),
         ]
-        print(f"\n=== CamAgent {__version__} ===")
+        print(f"\n{text.MENU_TITLE.format(version=__version__)}")
         for line in _status_lines(cams, state, problems, config_path):
             print(line)
         picked = _choose("", actions)
@@ -267,7 +482,9 @@ def run(config_path=None):
                 continue
         else:
             _do(label, action)
+            if label == text.M_SWITCH_TO_WEBSITE:
+                continue                                  # redraw in the other mode, no pause
         try:
-            input("\nPress Enter to go back to the menu.")
+            input(text.MENU_PRESS_ENTER)
         except (KeyboardInterrupt, EOFError):
             return
