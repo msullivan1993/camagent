@@ -10,6 +10,7 @@ connecting one answers with the address where they can allow it), and a token un
 import json
 import os
 import socket
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -116,6 +117,12 @@ def computer_name():
         return "camagent"
 
 
+def no_screen():
+    """True on Linux without a desktop (no DISPLAY or WAYLAND_DISPLAY): no browser can open on this computer."""
+    return (sys.platform.startswith("linux") and not os.environ.get("DISPLAY")
+            and not os.environ.get("WAYLAND_DISPLAY"))
+
+
 def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
     """Run the sign-in: show the code and address, wait for approval. Returns (token, account name).
     Ctrl+C stops waiting (KeyboardInterrupt goes to the caller)."""
@@ -125,13 +132,17 @@ def sign_in(site=DEFAULT_SITE, name=None, show=print, sleep=time.sleep):
     if status != 200 or not d.get("device_code"):
         raise LinkError(f"CamAgent couldn't start the sign-in (YonderView answered {status}). Try again in a minute.")
     show("")
+    if no_screen():
+        show("  This computer has no screen or browser. CamAgent can't open a web page here.")
+        show("  Use your phone or another computer for the next steps.")
+        show("")
     show("  On your phone or another computer, open this address:")
     show(f"      {d['verification_uri']}")
     show("  Sign in to YonderView, then type this code:")
     show("")
     show(f"      {d['user_code']}")
     show("")
-    show("  Or open this link. It fills in the code for you:")
+    show("  Or open this link on your phone or another computer. It fills in the code for you:")
     show(f"      {d.get('verification_uri_complete', d['verification_uri'])}")
     show(f"  CamAgent is waiting for you to enter the code. The code works for "
          f"{int(d.get('expires_in') or 600) // 60} minutes.")

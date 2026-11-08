@@ -188,7 +188,25 @@ def run(config_path=None, camera_id=None):
     return _summary(r)
 
 
-def _check_privacy(r):
+def login_accounts(passwd="/etc/passwd"):
+    """Linux: how many people have a login on this computer: accounts with a user ID from 1000 up (below 65534) and
+    a real login shell (not nologin or false)."""
+    n = 0
+    try:
+        with open(passwd, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.rstrip("\n").split(":")
+                if len(parts) < 7 or not parts[2].isdigit():
+                    continue
+                shell = parts[6].strip().rsplit("/", 1)[-1]
+                if 1000 <= int(parts[2]) < 65534 and shell not in ("nologin", "false", ""):
+                    n += 1
+    except OSError:
+        return None
+    return n
+
+
+def _check_privacy(r, passwd="/etc/passwd"):
     """Linux: other users of this computer can see every program's command line (ps), and ffmpeg's holds the camera's
     login and the stream's secrets. hidepid=2 on /proc hides other users' programs."""
     if os.name == "nt":
@@ -199,6 +217,10 @@ def _check_privacy(r):
     except (OSError, IndexError):
         return
     if not any(o in opts.split(",") for o in ("hidepid=2", "hidepid=invisible", "hidepid=1", "hidepid=noaccess")):
+        people = login_accounts(passwd)
+        if people is not None and people <= 1:
+            r.line(OK, "Privacy from other users", "Only one person logs in to this computer")
+            return
         r.line(WARN, "Privacy from other users", "other users of this computer can see ffmpeg's command "
                "line. That line holds the camera's login and the video's secrets",
                "this only matters if other people have their own logins on this computer. If that's you, whoever "

@@ -96,6 +96,35 @@ def _measure_again(cam):
 RULE = "-" * 64            # plain dashes: they show the same in every Windows and Linux window
 
 
+MAX_LOGIN_TRIES = 3
+_login_state = {"tries": 0, "warned": False}
+
+
+def _reset_login_tries():
+    """A new setup run starts counting the camera's rejected logins from zero."""
+    _login_state.update(tries=0, warned=False)
+
+
+def _warn_lockout():
+    """One line before the first login try of a setup run: cameras lock people out after a few wrong tries."""
+    if not _login_state["warned"]:
+        _login_state["warned"] = True
+        print("  Careful: cameras lock you out after a few wrong tries. Type the camera's login carefully.")
+
+
+def _login_rejected():
+    """Count one rejected login. After MAX_LOGIN_TRIES in one setup run, CamAgent stops (no more tries)."""
+    _login_state["tries"] += 1
+    if _login_state["tries"] >= MAX_LOGIN_TRIES:
+        _stop_for_lockout()
+
+
+def _stop_for_lockout():
+    raise SystemExit(f"The camera has refused this login {MAX_LOGIN_TRIES} times. CamAgent stops trying so your "
+                     "camera doesn't lock you out. Check the username and password in the camera's web page. "
+                     "Then run CamAgent setup again later. Some cameras let you try again after a few minutes.")
+
+
 def heading(text):
     """A new section of setup: a blank line and a line of dashes above and below, so each step stands apart."""
     print(f"\n\n{RULE}\n  {text}\n{RULE}")
@@ -169,6 +198,7 @@ def _make_login(cam):
     print(ADD_LOGIN_STEPS)
     print("Type them exactly (capital letters matter). CamAgent saves them on this computer.")
     print("You don't need to keep a copy.")
+    _warn_lockout()
     while True:
         input("Press Enter after you add the login on the camera...")
         print("  CamAgent is checking the login...")
@@ -178,6 +208,8 @@ def _make_login(cam):
         except Exception as e:  # noqa: BLE001
             print(f"  The camera didn't accept it yet: {camera.friendly_error(e)}")
             print("  (Each try counts toward the camera's lockout. Check that the camera saved the login first.)")
+            if "login rejected" in camera.friendly_error(e):
+                _login_rejected()
             fixed = "I've fixed it. Check again"
             if choose([fixed, "Enter a different login instead"], str) != fixed:
                 return False
@@ -252,6 +284,9 @@ def step_pick_stream(cfg, ffprobe):
     cam = cfg["camera"]
     heading("Step 2 of 4: The camera's video")
     guide.show(guide.STREAM)
+    if _login_state["tries"] >= MAX_LOGIN_TRIES:
+        _stop_for_lockout()
+    _warn_lockout()
     print("CamAgent is asking your camera what video it can send (this can take up to a minute)...")
     try:
         info = camera.onvif_inspect(cam["host"], cam["onvif_port"], cam["username"], cam["password"])
@@ -262,6 +297,7 @@ def step_pick_stream(cfg, ffprobe):
         info = None
         msg = camera.friendly_error(e)
         if "login rejected" in msg:
+            _login_rejected()
             print("  The camera refused the username or password. Try signing in to the camera's web page with")
             print("  them to be sure. Many cameras also need a separate user for ONVIF (the camera's control and")
             print("  setup standard). Make one in that web page:")
@@ -733,6 +769,7 @@ def _rewalk_stream(cam):
     """Choose a stream again without re-entering the camera's login or the settings block."""
     ffmpeg = camera.find_ffmpeg(cam["stream"].get("ffmpeg", ""))
     ffprobe = camera.find_ffprobe(ffmpeg)
+    _reset_login_tries()
     while True:
         if not step_pick_stream(cam, ffprobe):
             step_find_camera(cam)
@@ -757,6 +794,7 @@ def _tools(cfg):
 
 
 def _walk(cam, ffmpeg, ffprobe, main_path=None):
+    _reset_login_tries()
     done = False
     while not done:                               # camera details -> stream; go back on failure
         step_find_camera(cam)

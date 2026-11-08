@@ -309,6 +309,14 @@ def capability():
         return None
 
 
+# Speed on the 1080p test clip (x real time at 15 fps) a graphics method needs to count as able to make lower
+# resolutions. Raspberry Pi 4 (2026-11-08): the hardware encoder made 720p+480p from a live 1080p camera at 1.02x
+# real time (43% CPU; 1.67x flat out), so it passes at 1.0. Its decoder and encoder stop at 1080p: "max_source".
+MIN_SPEED = 1.2
+MIN_SPEED_BY_METHOD = {"v4l2m2m": 1.0, "v4l2m2m-lite": 1.0}
+MAX_SOURCE = {"v4l2m2m": 1080, "v4l2m2m-lite": 1080}
+
+
 def measure(cfg_path=None):
     """Test how this computer makes video (each way it could: graphics chip or processor), on a 1080p test clip,
     and keep the summary. About a minute or two of hard work for the computer."""
@@ -325,11 +333,14 @@ def measure(cfg_path=None):
     if not ffmpeg:
         return None
     results = convert.detect(ffmpeg, size="1920x1080", timeout=20)
-    gpu = next(((m, s) for m, s in results if s and m in GPU_METHODS and s >= 1.2), None)
+    gpu = next(((m, s) for m, s in results if s and m in GPU_METHODS
+                 and s >= MIN_SPEED_BY_METHOD.get(m, MIN_SPEED)), None)
     cpu = next((s for m, s in results if m == "x264"), None)
     out = {"gpu": gpu[0] if gpu else "", "gpu_label": convert.LABELS.get(gpu[0], gpu[0]) if gpu else "",
            "gpu_speed": gpu[1] if gpu else None, "cpu_speed": cpu, "at": int(time.time()),
            "fp": _fingerprint(ffmpeg)}
+    if gpu and gpu[0] in MAX_SOURCE:
+        out["max_source"] = MAX_SOURCE[gpu[0]]         # lower resolutions only for cameras at or below this height
     path = config.state_dir() / CAPABILITY_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(out), encoding="utf-8")
@@ -374,6 +385,8 @@ def _info(cfg_path):
     cap = capability()
     if cap:
         out["encoders"] = {k: cap.get(k) for k in ("gpu", "gpu_label", "gpu_speed", "cpu_speed", "at")}
+        if cap.get("max_source"):
+            out["encoders"]["max_source"] = cap["max_source"]
     return out
 
 
@@ -432,6 +445,11 @@ def run(cfg_path=None, once=False, sleep=time.sleep):
         try:
             reply = link.checkin(site, token, _info(cfg_path))
             backoff = 5
+            for job in reply.get("jobs") or []:
+                if not isinstance(job, dict) or not isinstance(job.get("id"), int):
+                    continue
+                ok, out = run_job(job)
+                _send_result(site, token, job["id"], ok, out, sleep)
         except link.NotSignedIn:
             log.warning("this computer was unlinked on the website; waiting for a new sign-in")
             if once:
@@ -445,14 +463,13 @@ def run(cfg_path=None, once=False, sleep=time.sleep):
             sleep(backoff)
             backoff = min(backoff * 2, 300)
             continue
-        for job in reply.get("jobs") or []:
-            if not isinstance(job, dict) or not isinstance(job.get("id"), int):
-                continue
-            ok, out = run_job(job)
-            try:
-                link.job_result(site, token, job["id"], ok, out)
-            except link.LinkError as e:
-                log.info("couldn't send a result (%s)", e)
+        except Exception as e:  # noqa: BLE001 - one bad round never stops the helper
+            log.warning("the website setup helper had an unexpected problem (%s); trying again in %ss", e, backoff)
+            if once:
+                return "error"
+            sleep(backoff)
+            backoff = min(backoff * 2, 300)
+            continue
         if once:
             return "ok"
         try:
@@ -460,6 +477,26 @@ def run(cfg_path=None, once=False, sleep=time.sleep):
         except (TypeError, ValueError):
             wait = 60
         sleep(wait)
+
+
+RESULT_WAITS = (2, 5)          # seconds to wait before the 2nd and 3rd try of sending a job's result
+
+
+def _send_result(site, token, job_id, ok, out, sleep):
+    """Send a job's result; try twice more (after 2 s, then 5 s) if it fails. NotSignedIn goes to the caller."""
+    for attempt in range(len(RESULT_WAITS) + 1):
+        try:
+            if link.job_result(site, token, job_id, ok, out):
+                return True
+            why = "YonderView didn't accept it"
+        except link.NotSignedIn:
+            raise
+        except link.LinkError as e:
+            why = str(e)
+        if attempt < len(RESULT_WAITS):
+            sleep(RESULT_WAITS[attempt])
+    log.warning("couldn't send the result of job %s (%s); giving up", job_id, why)
+    return False
 
 
 def main(cfg_path=None):

@@ -28,6 +28,20 @@ def _log(msg):
         pass
 
 
+RESULT_FILE = "update_result.json"
+
+
+def _record(ok, version, message):
+    """Keep the last update's outcome for the camera's Health tab (prereqs.update_notice)."""
+    try:
+        d = config.state_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / RESULT_FILE).write_text(json.dumps({"at": int(time.time()), "ok": bool(ok), "version": str(version),
+                                                 "message": str(message)[:200]}), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def version_tuple(v):
     nums = re.findall(r"\d+", str(v).lstrip("vV").split("-")[0])
     return tuple(int(n) for n in nums[:3]) if nums else (0,)
@@ -183,23 +197,31 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False, if_req
         service.restart()
     except NotSigned as e:
         _log(f"NOT installing {tag}: {e}. Staying on {previous}.")
+        _record(False, tag.lstrip("vV"), f"it isn't a release signed with YonderView's key ({config.scrub(str(e))[:100]})")
         return
     except Exception as e:  # noqa: BLE001
         _log(f"install of {tag} failed: {e}; staying on {previous}")
+        _record(False, tag.lstrip("vV"), f"the install didn't work ({config.scrub(str(e))[:100]})")
         return
     if _verify(tag.lstrip("vV"), before):
+        _record(True, tag.lstrip("vV"), "updated")
         return _log(f"updated to {tag}; cameras are streaming")
 
     _log(f"{tag} didn't come up healthy within {VERIFY_SECONDS}s; rolling back to {previous}")
+    why = f"the cameras didn't start streaming again within {VERIFY_SECONDS} seconds"
+    _record(False, tag.lstrip("vV"), why)
     try:
         _install(repo, f"v{previous}")          # signed, usually the copy kept in releases/
         _refresh_unit(config_path)
         service.restart()
         _log(f"rolled back to {previous}" + (" and it's streaming again" if _verify(previous, before) else
                                              "; check the cameras (camagent doctor)"))
+        _record(False, tag.lstrip("vV"), why + ", so CamAgent went back")
     except NotSigned as e:
+        _record(False, tag.lstrip("vV"), why + ", and CamAgent couldn't go back. Type camagent doctor to check")
         _log(f"can't roll back to {previous} automatically ({e}). {tag} stays; check the cameras (camagent doctor).")
     except Exception as e:  # noqa: BLE001
+        _record(False, tag.lstrip("vV"), why + ", and going back failed. Type camagent doctor to check")
         _log(f"rollback failed: {e}. Run 'camagent update --ref v{previous}' by hand.")
 
 

@@ -23,7 +23,7 @@ sent = []
 with mock.patch.object(remote, "_account", return_value=("https://yonderview.net", "yva_x")), \
         mock.patch.object(link, "checkin", return_value={"jobs": [{"id": 7, "kind": "discover"}, {"id": "bad"}],
                                                          "next_s": 2}) as ci, \
-        mock.patch.object(link, "job_result", side_effect=lambda site, tok, jid, ok, out: sent.append((jid, ok))), \
+        mock.patch.object(link, "job_result", side_effect=lambda site, tok, jid, ok, out: sent.append((jid, ok)) or True), \
         mock.patch("camagent.camera.discover", return_value=[]):
     assert remote.run(once=True) == "ok"
 info = ci.call_args[0][2]

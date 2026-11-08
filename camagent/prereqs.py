@@ -88,9 +88,35 @@ def clock_notice() -> str:
     return _clock["problem"]
 
 
+UPDATE_NOTICE_DAYS = 7
+
+
+def update_notice() -> str:
+    """The last update failed or was rolled back within a week (update.py keeps update_result.json), or ""."""
+    import json
+    import time
+
+    from . import __version__
+    from . import config
+    from .update import RESULT_FILE, version_tuple
+    try:
+        r = json.loads((config.state_dir() / RESULT_FILE).read_text(encoding="utf-8"))
+        at, version, why = float(r["at"]), str(r["version"]), str(r.get("message") or "")
+    except (OSError, ValueError, KeyError, TypeError):
+        return ""
+    if r.get("ok") or time.time() - at > UPDATE_NOTICE_DAYS * 86400 or version_tuple(__version__) > version_tuple(version):
+        return ""
+    t = time.localtime(at)
+    when = f"{time.strftime('%b', t)} {t.tm_mday}"
+    if __version__ == version:
+        return f"CamAgent updated to {version} on {when}, but {why}. Type camagent doctor to check."[:300]
+    return (f"CamAgent couldn't update to {version} on {when} and stayed on {__version__}: {why}. "
+            "CamAgent tries again tonight.")[:300]
+
+
 def notices() -> list:
     """Problems the host should see on the camera's Health tab (telemetry), in plain words."""
-    return [n for n in (unsafe_python(), unsafe_ffmpeg(), clock_notice()) if n]
+    return [n for n in (unsafe_python(), unsafe_ffmpeg(), clock_notice(), update_notice()) if n]
 
 
 _warned_unsafe = set()
