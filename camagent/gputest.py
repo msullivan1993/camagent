@@ -27,8 +27,13 @@ def ways(method):
         ("all on the graphics chip, AMD's resizer (vpp_amf)",
          ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"], lambda h: f"vpp_amf=w=-2:h={h}", enc),
         ("all on the graphics chip, the Windows resizer (scale_d3d11)",
-         ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"], lambda h: f"scale_d3d11=w=-2:h={h}", enc),
+         ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"], lambda h: f"scale_d3d11=width={_width(h)}:height={h}", enc),
     ]
+
+
+def _width(height):
+    """16:9 width for a height, even (scale_d3d11 takes exact sizes: width/height, not w=-2)."""
+    return int(round(height * 16 / 9 / 2)) * 2
 
 
 def outputs_for(source_height):

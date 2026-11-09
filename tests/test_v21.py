@@ -248,3 +248,7 @@ assert _g.outputs_for(2160)[0][0] == 1080
 assert _g._error_line("x\n[scale_d3d11] Failed to create device\nConversion failed!\nbench: maxrss=1KiB\n") \
     == "[scale_d3d11] Failed to create device"
 print("v0.21.3 gpu-test sizes and errors OK")
+
+# ---- 0.22.2: scale_d3d11 takes width/height (ffmpeg 9 refused w=-2) ----
+assert "scale_d3d11=width=1280:height=720" in [w[2](720) for w in _g.ways("amf")]
+print("v0.22.2 scale_d3d11 options OK")
