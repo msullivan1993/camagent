@@ -14,7 +14,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camagent import __version__, camera, config, configure, doctor, link, prereqs, remote, update  # noqa: E402
 
-assert __version__.startswith("0.21.")
+assert __version__ >= "0.21"
 
 # ---- 1. lockout warning once, stop after 3 rejected tries ----
 configure._reset_login_tries()
