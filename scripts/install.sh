@@ -254,7 +254,7 @@ echo
 camagent version
 echo
 # an installed service picks up this version's settings (as after an update)
-if [ -f /etc/systemd/system/camagent.service ]; then
+if [ -f /etc/systemd/system/camagent.service ] || [ -f /etc/systemd/system/camagent-remote.service ]; then
   "$APP/venv/bin/python" -I -c "from camagent import service; service.refresh_unit()" || true
 fi
 if [ -f "$ETC/camagent.toml" ]; then

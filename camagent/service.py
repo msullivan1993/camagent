@@ -264,7 +264,7 @@ def install(config_path=None):
                 if installed:
                     subprocess.run(["sc", "stop", SERVICE], capture_output=True)
                     time.sleep(3)
-            print(f"CamAgent is downloading the helper that runs it in the background (WinSW) to {exe}")
+            print(f"Downloading the background helper (WinSW) to {exe}...")
             _download_checked(WINSW_URL, WINSW_SHA256, exe)
         xml.write_text(_win_xml(config_path), encoding="utf-8")
         if installed:
@@ -355,13 +355,11 @@ def refresh_unit(config_path=None):
         _win_apply_account(config_path)
         return
     if not UNIT_PATH.exists():
+        if remote_installed():
+            _refresh_remote_unit(config_path)  # set up on the website, no camera yet: the helper alone
         return
     _linux_seal(config_path)
-    if not remote_installed():
-        try:
-            install_remote(config_path)        # 0.18: after an update from before, add the website setup helper
-        except Exception:  # noqa: BLE001
-            pass
+    _refresh_remote_unit(config_path)
     UNIT_PATH.write_text(_linux_unit(Path(config_path or default_config_path())), encoding="utf-8")
     _run(["systemctl", "daemon-reload"], check=False)
     _ensure_update_now(config_path)
@@ -556,7 +554,22 @@ def install_remote(config_path=None):
             Path(path).unlink(missing_ok=True)
         _run(["schtasks", "/Run", "/TN", REMOTE_TASK], check=False)
         return
-    REMOTE_UNIT.write_text(f"""[Unit]
+    _linux_seal(config_path)                   # the key made here, outside the helper's read-only system folders
+    REMOTE_UNIT.write_text(_remote_unit(config_path), encoding="utf-8")
+    _run(["systemctl", "daemon-reload"], check=False)
+    _run(["systemctl", "enable", "--now", "camagent-remote.service"], check=False)
+
+
+def _remote_unit(config_path) -> str:
+    """The helper runs as root (it writes CamAgent's settings and starts the service), but in a sandbox (0.23): the
+    system is read-only except CamAgent's settings (/etc/camagent), its own folder (/var/lib/camagent-remote),
+    the program (/opt/camagent: updates, logs), the service's state folder (old files moved out once) and the
+    service units (it installs the service with the first camera). The camera-facing ffmpeg runs as camagent."""
+    folder = Path(config_path).parent
+    rw = ["-/etc/camagent", f"-{folder}", "-/opt/camagent", f"-{base_dir()}", "-/var/lib/camagent",
+          "-/etc/systemd/system"]
+    rw = " ".join(dict.fromkeys(rw))
+    return f"""[Unit]
 Description=camagent website setup helper (yonderview.net)
 After=network-online.target
 Wants=network-online.target
@@ -566,18 +579,41 @@ StartLimitIntervalSec=0
 ExecStart={sys.executable} -I -m camagent remote --config {config_path}
 Restart=always
 RestartSec=30
+StateDirectory=camagent-remote
+StateDirectoryMode=0755
 NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={rw}
 ProtectHome=yes
 PrivateTmp=yes
 ProtectKernelModules=yes
 ProtectKernelTunables=yes
+ProtectKernelLogs=yes
 ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
 
 [Install]
 WantedBy=multi-user.target
-""", encoding="utf-8")
-    _run(["systemctl", "daemon-reload"], check=False)
-    _run(["systemctl", "enable", "--now", "camagent-remote.service"], check=False)
+"""
+
+
+def _refresh_remote_unit(config_path=None):
+    """After an update: the helper's unit as this version writes it (0.23's sandbox), when it differs. The helper
+    starts again on it with the restart after the update (or by itself when it sees the new version)."""
+    try:
+        if os.name == "nt":
+            return
+        if not remote_installed():
+            install_remote(config_path)        # 0.18: after an update from before, add the website setup helper
+            return
+        text = _remote_unit(Path(config_path or default_config_path()))
+        if REMOTE_UNIT.read_text(encoding="utf-8") != text:
+            REMOTE_UNIT.write_text(text, encoding="utf-8")
+            _run(["systemctl", "daemon-reload"], check=False)
+    except Exception:  # noqa: BLE001 - never stop an update over the helper
+        pass
 
 
 def remote_installed() -> bool:

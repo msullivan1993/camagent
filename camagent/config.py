@@ -156,7 +156,11 @@ def _toml_value(v):
         return "true" if v else "false"
     if isinstance(v, (int, float)):
         return str(v)
-    return json.dumps(str(v))          # JSON string escaping is valid TOML basic-string syntax
+    # JSON string escaping is valid TOML basic-string syntax, with the text itself as UTF-8: an emoji written as
+    # JSON's surrogate pair (\ud83d\ude00) isn't valid TOML, and the file couldn't be read back (0.23). TOML also
+    # wants DEL escaped; a lone surrogate can't be written as UTF-8 at all, so it becomes "?"
+    text = str(v).encode("utf-8", "replace").decode("utf-8")
+    return json.dumps(text, ensure_ascii=False).replace("\x7f", "\\u007f")
 
 
 def dumps(cfg: dict, sections=None, title="camagent configuration") -> str:
@@ -398,6 +402,197 @@ def state_dir() -> Path:
     return Path("/var/lib/camagent")
 
 
+def remote_dir() -> Path:
+    """Where CamAgent's administrator side (the website setup helper and the update job, as root or SYSTEM) keeps
+    its own files: kept setups (pending/), the video test (capability.json), the last update (update_result.json).
+    Never in state_dir(), which the service's own account can change: root writing there could be steered with a
+    symlink to any file on the computer (0.23). Linux: root's own folder; Windows: in CamAgent's Administrators-only
+    folder."""
+    if os.name == "nt":
+        return base_dir() / "remote"
+    return Path("/var/lib/camagent-remote")
+
+
+class UnsafeFolder(OSError):
+    """A folder CamAgent's administrator side won't write in: a link, or someone else can change it."""
+
+
+_REPARSE_POINT = 0x400        # Windows: a junction or symbolic link
+
+
+def _own_dir(d: Path, mode: int):
+    """Make the folder (its parent already checked), or check the one there: a real folder, not a link, owned by
+    this account (root) and not writable by anyone else. Raises UnsafeFolder."""
+    import stat
+    try:
+        st = os.lstat(d)
+    except FileNotFoundError:
+        os.mkdir(d, mode)
+        st = os.lstat(d)
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or \
+            getattr(st, "st_file_attributes", 0) & _REPARSE_POINT:
+        raise UnsafeFolder(f"{d} isn't a real folder (it may be a link). CamAgent won't write there")
+    if os.name != "nt":
+        if st.st_uid != os.geteuid() or st.st_mode & 0o022:
+            raise UnsafeFolder(f"Another account can change {d}. CamAgent won't write there")
+        if stat.S_IMODE(st.st_mode) != mode:
+            os.chmod(d, mode)              # a real folder of ours, in a folder only root can change
+    return st
+
+
+def _lock_remote_dir_windows(d: Path):
+    """Administrators and SYSTEM may change it; the service's account may read it (the update result for the
+    Health tab). pending/ gets WINDOWS_ACL (no read for the service) separately."""
+    import subprocess
+    try:
+        subprocess.run(["icacls", str(d), *WINDOWS_ACL], capture_output=True, timeout=30)
+        from .service import LOCAL_SERVICE_SID, service_sid
+        for sid in (LOCAL_SERVICE_SID, service_sid()):
+            subprocess.run(["icacls", str(d), "/grant", f"*{sid}:(OI)(CI)(RX)"], capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def ensure_remote_dir(sub=None) -> Path:
+    """remote_dir() (or its subfolder, e.g. "pending"), made and checked: only root / Administrators can change it.
+    The folder itself can be read by the service (the update result, the video test); pending/ (logins) is root's
+    alone. Old files from state_dir() are moved in (once, only real files root made). Raises UnsafeFolder."""
+    d = remote_dir()
+    if os.name == "nt":
+        d.parent.mkdir(parents=True, exist_ok=True)
+        new = not d.exists()
+        _own_dir(d, 0o755)
+        if new:
+            _lock_remote_dir_windows(d)
+    else:
+        _own_dir(d, 0o755)
+    _migrate_remote_files(d)
+    if not sub:
+        return d
+    s = d / sub
+    new = not s.exists()
+    _own_dir(s, 0o700)
+    if new and os.name == "nt":
+        import subprocess
+        try:
+            subprocess.run(["icacls", str(s), *WINDOWS_ACL], capture_output=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return s
+
+
+def write_private(path: Path, text: str, mode: int = 0o600):
+    """Write a file in remote_dir() atomically: a new temporary file next to it (never an existing file or a link),
+    flushed to disk, then renamed over the old one (a link there is replaced, not followed)."""
+    import secrets
+    path = Path(path)
+    tmp = path.parent / f".{path.name}.{secrets.token_hex(6)}.tmp"
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    fd = os.open(tmp, flags, mode)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            if os.name != "nt":
+                os.fchmod(f.fileno(), mode)       # exactly this mode, whatever the umask
+            f.write(text.encode("utf-8"))
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def _read_old(path: Path):
+    """An old file's text from state_dir(), only if it's a real file (not a link) that root made: the service's
+    account could have put anything else there. None otherwise."""
+    import stat
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode) or st.st_size > 1_000_000 or \
+                getattr(os.lstat(path), "st_file_attributes", 0) & _REPARSE_POINT:
+            return None
+        if os.name != "nt" and st.st_uid != os.geteuid():
+            return None
+        with os.fdopen(fd, "rb") as f:
+            fd = None
+            return f.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+REMOTE_FILES = {"capability.json": 0o644, "update_result.json": 0o644}
+
+
+def _migrate_remote_files(d: Path):
+    """Before 0.23 these lived in state_dir(): move them into remote_dir() once, if they're safe to read."""
+    import stat
+    old = state_dir()
+    try:
+        if Path(old).resolve() == Path(d).resolve():
+            return
+    except OSError:
+        return
+    for name, mode in REMOTE_FILES.items():
+        src = old / name
+        if not os.path.lexists(src):
+            continue
+        text = _read_old(src)
+        if text is not None and not (d / name).exists():
+            write_private(d / name, text, mode)
+        if text is not None:
+            try:
+                os.unlink(src)            # removes the file itself (never follows anything)
+            except OSError:
+                pass
+    pend = old / "pending"
+    try:
+        st = os.lstat(pend)
+    except OSError:
+        return
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode) or \
+            getattr(st, "st_file_attributes", 0) & _REPARSE_POINT or (os.name != "nt" and st.st_uid != os.geteuid()):
+        return                            # not the folder CamAgent made: ignored
+    try:
+        names = [n for n in os.listdir(pend) if n.endswith(".json") and n[:-5].isalnum() and len(n) <= 45]
+    except OSError:
+        return
+    target = None
+    for n in names:
+        text = _read_old(pend / n)
+        if text is None:
+            continue
+        if target is None:
+            target = d / "pending"
+            _own_dir(target, 0o700)
+            if os.name == "nt":
+                import subprocess
+                try:
+                    subprocess.run(["icacls", str(target), *WINDOWS_ACL], capture_output=True, timeout=30)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+        if not (target / n).exists():
+            write_private(target / n, text, 0o600)
+        try:
+            os.unlink(pend / n)
+        except OSError:
+            pass
+    try:
+        os.rmdir(pend)
+    except OSError:
+        pass
+
+
 # ---------- URL helpers ----------
 
 def rtsp_with_auth(url: str, user: str, password: str) -> str:
@@ -410,9 +605,19 @@ def rtsp_with_auth(url: str, user: str, password: str) -> str:
     return urlunparse((u.scheme, netloc, u.path, u.params, u.query, u.fragment))
 
 
+# a login in the video address's path or query: cheap cameras (XMeye: /user=admin&password=X&channel=1...; others
+# ?user=admin&pwd=X). The value is hidden, the rest stays readable (0.23)
+_QUERY_SECRETS = re.compile(r"(?<![A-Za-z])((?:password|passwd|pass|pwd|psw|pw|token)=)[^&\s/?#;]+", re.I)
+
+
+def _hide_query_secrets(text: str) -> str:
+    return _QUERY_SECRETS.sub(lambda m: m.group(1) + "***", text)
+
+
 def strip_auth(url: str) -> str:
     u = urlparse(url)
-    return urlunparse((u.scheme, u.netloc.split("@")[-1], u.path, u.params, u.query, u.fragment))
+    return _hide_query_secrets(urlunparse((u.scheme, u.netloc.split("@")[-1], u.path, u.params, u.query,
+                                           u.fragment)))
 
 
 def redact(url: str) -> str:
@@ -430,7 +635,7 @@ def redact(url: str) -> str:
                 v = ":".join(v.split(":")[:3] + ["***"])
             parts.append(f"{k}={v}")
         url = urlunparse((u.scheme, u.netloc, u.path, u.params, "&".join(parts), u.fragment))
-    return url
+    return _hide_query_secrets(url)
 
 
 # userinfo up to the last "@" before the host (a password may hold a raw "@"); any case; rtmp too (0.17.12)
@@ -441,7 +646,8 @@ _SECRETS = re.compile(r"(passphrase=)[^&\s]+|(streamid=[^:&\s]*:[^:&\s]*:[^:&\s]
 def scrub(text: str) -> str:
     """Remove credentials from free text such as ffmpeg error messages."""
     text = _URL_AUTH.sub(lambda m: f"{m.group(1)}://***@", text)
-    return _SECRETS.sub(lambda m: (m.group(1) or m.group(2)) + "***", text)
+    text = _SECRETS.sub(lambda m: (m.group(1) or m.group(2)) + "***", text)
+    return _hide_query_secrets(text)
 
 
 def srt_url(cfg: dict, path: str = "") -> str:

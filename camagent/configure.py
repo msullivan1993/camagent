@@ -63,7 +63,7 @@ def _try_fix_stream(cam, max_height=1080):
     already uses. CamAgent never asks for the camera's admin login: most cameras only let an administrator change
     this, so it often doesn't work, and then the person changes it in the camera's web page. True if it changed."""
     from .controls import Controls, NotAllowed, OnvifSession
-    print("  CamAgent is asking your camera to change its video setting...")
+    print("  Asking your camera to change its video setting...")
     had_sound = camera.sound_check(cam) if cam["stream"].get("audio") else None
     try:
         s = OnvifSession(cam)
@@ -81,7 +81,7 @@ def _try_fix_stream(cam, max_height=1080):
         print("  Your camera didn't need any change.")
         return True
     print("  Your camera changed: " + "; ".join(changes) + ".")
-    print("  CamAgent is waiting a few seconds for the camera's video to restart...")
+    print("  Waiting a few seconds for the camera's video to restart...")
     time.sleep(8)
     if had_sound and camera.sound_check(cam) is False:
         print(camera.AUDIO_LOST)
@@ -191,7 +191,7 @@ def _make_login(cam):
     _warn_lockout()
     while True:
         input("Press Enter after you add the login on the camera...")
-        print("  CamAgent is checking the login...")
+        print("  Checking the login...")
         try:
             camera.onvif_connect(cam["host"], cam["onvif_port"], name, pw).devicemgmt.GetDeviceInformation()
             break
@@ -365,7 +365,7 @@ def step_check_stream(cfg, ffprobe):
         print(" Install or reinstall ffmpeg. Then change this camera's settings again to check the video.)")
         return "ok"
     while True:
-        print("\nCamAgent is checking your camera's video (up to 30 seconds)...")
+        print("\nChecking your camera's video (up to 30 seconds)...")
         streams = camera.probe(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
         if not streams:
             print(f"  CamAgent couldn't get video from {config.redact(cam['rtsp_url']) if cam['rtsp_url'] else '(no video address)'}.")
@@ -405,7 +405,7 @@ def step_check_stream(cfg, ffprobe):
                 return "stream"
         break
 
-    print("  CamAgent is measuring what your camera actually sends (a few seconds)...")
+    print("  Measuring what your camera sends (a few seconds)...")
     m = camera.measure_stream(ffprobe, config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"]))
     cfg["_measure"] = m
     tips = camera.stream_advice(m)
@@ -596,7 +596,7 @@ def step_convert(cfg, ffmpeg):
         print("  Install ffmpeg. Then change this camera's settings again.")
         s["convert"] = "off"
         return
-    print("\nCamAgent is checking what this computer can use to convert video (up to a minute)...")
+    print("\nChecking how this computer can convert video (up to a minute)...")
     results = convert.detect(ffmpeg, show=print)
     cfg["_detected"] = results                    # step_versions reuses it
     method = convert.best(results)
@@ -606,7 +606,7 @@ def step_convert(cfg, ffmpeg):
     room = convert.headroom(dict(results).get(method), width, height or 2160, fps)
     url = config.rtsp_with_auth(cam["rtsp_url"], cam["username"], cam["password"])
     scale = not height or height > convert.TARGET_HEIGHT
-    print(f"\nCamAgent is using {convert.LABELS[method]}. It will try it on your camera's video for a few seconds...")
+    print(f"\nTrying {convert.LABELS[method]} on your camera's video for a few seconds...")
     speed = convert.speed_on_camera(ffmpeg, url, method, s.get("bitrate_kbps"), scale=scale)
     if speed is None and method != "x264":
         print(f"  {convert.LABELS[method]} couldn't convert your camera's video.")
@@ -647,7 +647,7 @@ def step_versions(cfg, ffmpeg):
     print("Otherwise YonderView's server makes them.")
     results = cfg.get("_detected")
     if results is None:
-        print("CamAgent is checking this computer's graphics (up to a minute)...")
+        print("Checking this computer's graphics chip (up to a minute)...")
         try:
             results = convert.detect(ffmpeg, methods=[m for m in convert.candidates() if m in GPU_METHODS],
                                      size="1920x1080", timeout=20)
@@ -999,7 +999,7 @@ def remove(config_path=None, camera_id=None):
     config.remove_camera(cam, main_path)
     print(f"Removed '{cid}'. The camera stays on yonderview.net. This computer just stops sending its video.")
     if service.is_installed():                       # the running CamAgent still has it loaded until it restarts
-        print("CamAgent is restarting so it stops sending the camera now...")
+        print("Restarting CamAgent so it stops sending the camera...")
         service.restart()
         if len(cams) == 1:
             print("That was the last camera on this computer. CamAgent still runs in the background, with nothing to")
@@ -1104,7 +1104,7 @@ def weather_station(config_path=None, camera_id=None):
     kind = kind[0]
     new = dict(config.DEFAULTS["weather"], kind=kind)
     if kind == "tempest":
-        print("CamAgent is listening for Tempest stations on this network (15 seconds)...")
+        print("Listening for Tempest stations on this network (15 seconds)...")
         try:
             found = weather.tempest_discover(15)
         except RuntimeError as e:
@@ -1125,7 +1125,7 @@ def weather_station(config_path=None, camera_id=None):
                           w.get("host", ""))
         if not new["host"]:
             raise SystemExit("You didn't give an address, so CamAgent changed nothing.")
-    print("CamAgent is reading the station (up to a minute for Tempest)...")
+    print("Reading the station (up to a minute for Tempest)...")
     reader = weather.Reader(new)
     try:
         r = reader.read(wait=70)

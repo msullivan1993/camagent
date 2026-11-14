@@ -104,26 +104,26 @@ def args(method, kbps=DEFAULT_KBPS, scale=True, height=TARGET_HEIGHT):
                  "-tune", "zerolatency", "-profile:v", "high", *rate, *keys])
 
 
-def _test_clip(ffmpeg, folder, size="3840x2160"):
+def _test_clip(ffmpeg, folder, size="3840x2160", run_as=None):
     """A 2-second H.264 clip (made on the CPU) to try each method on: 4K for converting a bigger camera."""
     clip = os.path.join(folder, "yv-convert-test.mp4")
     subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi",
                     "-i", f"testsrc2=size={size}:rate=15", "-t", "2", "-c:v", "libx264", "-preset", "ultrafast",
-                    "-pix_fmt", "yuv420p", clip], check=True, capture_output=True, timeout=120)
+                    "-pix_fmt", "yuv420p", clip], check=True, capture_output=True, timeout=120, **(run_as or {}))
     return clip
 
 
 LAST_ERRORS = {}          # method -> ffmpeg's last error line from the most recent try_method (for the log)
 
 
-def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60):
+def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60, run_as=None):
     """Convert the test clip with one method. Returns its speed (x real time), or None if it doesn't work here."""
     before, after = args(method)
     cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y", *before, "-i", clip, "-map", "0:v:0", *after,
            "-f", "null", "-"]
     t0 = time.monotonic()
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **(run_as or {}))
     except (OSError, subprocess.TimeoutExpired) as e:
         LAST_ERRORS[method] = str(e)
         return None
@@ -135,14 +135,17 @@ def try_method(ffmpeg, method, clip, seconds=2.0, timeout=60):
     return round(seconds / elapsed, 1)
 
 
-def detect(ffmpeg, methods=None, show=None, size="3840x2160", timeout=60):
+def detect(ffmpeg, methods=None, show=None, size="3840x2160", timeout=60, run_as=None):
     """[(method, speed or None)] for every candidate on this computer, best first. size: the test clip's (1080p for
-    host-made versions, so a Raspberry Pi's decoder, which stops at 1080p, can pass)."""
+    host-made versions, so a Raspberry Pi's decoder, which stops at 1080p, can pass). run_as: subprocess.run()
+    arguments for another account (prereqs.unprivileged(): the website setup helper, 0.23)."""
     out = []
     with tempfile.TemporaryDirectory() as d:
-        clip = _test_clip(ffmpeg, d, size)
+        if run_as and run_as.get("user") is not None:
+            os.chown(d, run_as["user"], run_as.get("group", -1))     # that account writes the test clip here
+        clip = _test_clip(ffmpeg, d, size, run_as)
         for m in methods or candidates():
-            speed = try_method(ffmpeg, m, clip, timeout=timeout)
+            speed = try_method(ffmpeg, m, clip, timeout=timeout, run_as=run_as)
             out.append((m, speed))
             if show:
                 clip_name = "4K" if size == "3840x2160" else ("1080p" if size == "1920x1080" else size)

@@ -5,8 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from camagent import gputest  # noqa: E402
 
-assert gputest.ways("qsv") == [] and len(gputest.ways("amf")) == 3
-name, pre, chain, enc = gputest.ways("amf")[1]
+assert gputest.ways("qsv") == [] and len(gputest.ways("amf")) == 4
+name, pre, chain, enc = gputest.ways("amf")[2]
 cmd = gputest.command("ffmpeg", "rtsp://u:p@10.0.0.5/live", pre, chain, enc)
 assert cmd.index("-hwaccel_output_format") < cmd.index("-i") and "-benchmark" in cmd
 graph = cmd[cmd.index("-filter_complex") + 1]

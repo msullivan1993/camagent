@@ -33,11 +33,12 @@ RESULT_FILE = "update_result.json"
 
 def _record(ok, version, message):
     """Keep the last update's outcome for the camera's Health tab (prereqs.update_notice)."""
+    # in root's own folder (config.remote_dir), written atomically: never through a link the service's account could
+    # have put in its state folder (0.23). Readable by the service, which shows it.
     try:
-        d = config.state_dir()
-        d.mkdir(parents=True, exist_ok=True)
-        (d / RESULT_FILE).write_text(json.dumps({"at": int(time.time()), "ok": bool(ok), "version": str(version),
-                                                 "message": str(message)[:200]}), encoding="utf-8")
+        config.write_private(config.ensure_remote_dir() / RESULT_FILE,
+                             json.dumps({"at": int(time.time()), "ok": bool(ok), "version": str(version),
+                                         "message": str(message)[:200]}), 0o644)
     except OSError:
         pass
 
@@ -157,8 +158,8 @@ def run(config_path=None, ref=None, auto=False, jitter=0, unsigned=False, if_req
             print("(You used --unsigned. Only do this if YonderView support asked you to.)")
             print(f"Installed: {_install_unsigned(repo, ref)}")
         else:
-            print(f"CamAgent is updating from {__version__} to {ref}. It checks first that this is an official, "
-                  "signed release...")
+            print(f"Updating CamAgent from {__version__} to {ref}...")
+            print("Checking that it's a signed release from YonderView...")
             from .release import DownloadFailed
             try:
                 print(f"Installed: {_install(repo, ref)}")

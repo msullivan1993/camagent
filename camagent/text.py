@@ -86,12 +86,12 @@ W_HEAD_HELP = "Help"
 W_HEAD_SETTINGS = "Settings"
 
 # Website mode messages
-W_WORKING = "CamAgent is getting this computer ready for setup on the website..."
+W_WORKING = "Getting this computer ready for setup on the website..."
 W_READY = "This computer is ready. Open {address} and pick this computer to add your cameras."
 W_NEED_SIGN_IN = "You haven't signed in yet. Choose {number} to sign in. Then you can set up cameras on {address}."
 W_OPEN_PRINT = "To set up your cameras, open this address in a web browser (on any computer or phone):"
 W_OPEN_SIGNED_OUT = "Sign in first, so the website can find this computer."
-W_OPENING = "CamAgent is opening it in your browser..."
+W_OPENING = "Opening it in your browser..."
 W_NO_CAMERAS = "No cameras are set up on this computer yet. Set them up on {address}."
 W_STATE_LINE = "YonderView: {account}  |  {running}  |  {cams}"
 W_PROBLEMS = ("! CamAgent found {problems} with your saved settings."
@@ -135,7 +135,7 @@ H_VERSIONS = "The lower qualities (720p and 480p)"
 H_WEATHER = "Weather station (beta)"
 
 P_SEARCH = "Do you want CamAgent to search this network for your camera? (Easiest; takes 3 seconds)"
-P_SEARCHING = "CamAgent is searching this network (3 seconds)..."
+P_SEARCHING = "Searching this network for cameras (3 seconds)..."
 P_FOUND = "CamAgent found these cameras (IP address:port, then the camera's name). Which one is yours?"
 P_NONE_OF_THESE = "None of these. I'll type the address myself"
 P_IP = "Your camera's IP address (four numbers with dots, like 192.168.1.64)"
@@ -148,7 +148,7 @@ P_LOGIN_INTRO_2 = ("  YonderView, with Operator rights. Operator rights let CamA
                    "presets.")
 P_LOGIN_INTRO_3 = "  They don't let CamAgent change the camera's settings."
 P_KEEP_LOGIN = "Keep the camera's current login ({username})"
-P_ASKING_CAMERA = "CamAgent is asking your camera what video it can send (this can take up to a minute)..."
+P_ASKING_CAMERA = "Asking your camera what video it can send (up to a minute)..."
 P_TYPE_NUMBER = "Type a number and press Enter: "
 
 MAKE_LOGIN = ("Let CamAgent make up a login (\"{login_name}\" and a strong password) "

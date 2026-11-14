@@ -447,7 +447,7 @@ def cli_probe(config_path=None, camera_id=None, moves=False):
     cam = _pick(cams, camera_id)
     if cam is None:
         return
-    print(f"CamAgent is asking the camera at {cam['camera'].get('host')} what it can do...")
+    print(f"Asking the camera at {cam['camera'].get('host')} what it can do...")
     p = PTZ(cam) if cam["camera"].get("ptz", True) else None
     try:
         if p:

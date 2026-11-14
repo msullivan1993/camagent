@@ -22,12 +22,14 @@ def ways(method):
         return []
     enc = ["-c:v", "h264_amf", "-quality", "speed"]
     return [
-        ("as CamAgent does it today (frames copied to the processor and resized there)",
+        ("graphics chip decodes, processor resizes, graphics chip encodes (CamAgent's first choice)",
          ["-hwaccel", "d3d11va"], lambda h: f"scale=-2:{h},format=nv12", enc),
+        ("processor decodes and resizes, graphics chip encodes (CamAgent's fallback, \"lite\")",
+         [], lambda h: f"scale=-2:{h},format=nv12", enc),
         ("all on the graphics chip, AMD's resizer (vpp_amf)",
          ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"], lambda h: f"vpp_amf=w=-2:h={h}", enc),
         ("all on the graphics chip, the Windows resizer (scale_d3d11)",
-         ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"], lambda h: f"scale_d3d11=width={_width(h)}:height={h}", enc),
+         ["-hwaccel", "d3d11va", "-hwaccel_output_format", "d3d11"], lambda h: f"scale_d3d11=width={_width(h)}:height={h}:format=nv12", enc),
     ]
 
 

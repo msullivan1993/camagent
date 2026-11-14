@@ -46,6 +46,29 @@ def admin_only_location(path) -> bool:
     return any(r and p.startswith(os.path.normcase(os.path.abspath(r)) + os.sep) for r in roots)
 
 
+def unprivileged() -> dict:
+    """subprocess.run() arguments that run a camera-facing ffmpeg/ffprobe as the service's own limited account
+    (camagent, with its video/render groups for the graphics chip) when CamAgent runs as root on Linux: the website
+    setup helper opens camera streams, and a bad one breaking ffmpeg then gets no more than the service would
+    (0.23). {} otherwise (not root, no camagent account). Windows: not done; the helper's ffmpeg runs as SYSTEM and
+    must sit in an administrators-only folder (see remote._safe_ffmpeg)."""
+    if WINDOWS or not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return {}
+    try:
+        import grp
+        import pwd
+        account = pwd.getpwnam("camagent")
+    except (ImportError, KeyError):
+        return {}
+    groups = []
+    for name in ("video", "render"):
+        try:
+            groups.append(grp.getgrnam(name).gr_gid)
+        except KeyError:
+            pass
+    return {"user": account.pw_uid, "group": account.pw_gid, "extra_groups": groups}
+
+
 def base_python() -> str:
     """The Python CamAgent's venv was made from (the one that actually runs: the venv's python.exe only starts it).
     Read from pyvenv.cfg ("home"), else what Python itself reports."""
@@ -100,7 +123,7 @@ def update_notice() -> str:
     from . import config
     from .update import RESULT_FILE, version_tuple
     try:
-        r = json.loads((config.state_dir() / RESULT_FILE).read_text(encoding="utf-8"))
+        r = json.loads((config.remote_dir() / RESULT_FILE).read_text(encoding="utf-8"))
         at, version, why = float(r["at"]), str(r["version"]), str(r.get("message") or "")
     except (OSError, ValueError, KeyError, TypeError):
         return ""

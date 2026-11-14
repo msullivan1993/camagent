@@ -38,6 +38,26 @@ def _discover(job):
 
 
 # ---------- a camera, found on this computer's network (website setup, phase 2) ----------
+def _lan_address(ip):
+    """A camera's address on a local network: private ranges (10/8, 172.16/12, 192.168/16, fc00::/7) and link-local
+    (169.254/16, fe80::/10: cameras without DHCP use these). Never this computer itself (loopback, and 0.0.0.0 / ::,
+    which reach this computer's own services), multicast, broadcast, reserved or documentation ranges, or the cloud
+    metadata address 169.254.169.254 (0.23; the same check as the website's)."""
+    import ipaddress
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    if ip.is_unspecified or ip.is_loopback or ip.is_multicast or ip.is_reserved:
+        return False
+    if isinstance(ip, ipaddress.IPv4Address):
+        if ip == ipaddress.IPv4Address("169.254.169.254") or ip == ipaddress.IPv4Address("255.255.255.255"):
+            return False
+        return any(ip in ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+                                                            "169.254.0.0/16"))
+    if ip.sixtofour or ip.teredo:
+        return False
+    return any(ip in ipaddress.ip_network(n) for n in ("fc00::/7", "fe80::/10"))
+
+
 def _local_host(job):
     """The camera's address from the job, only if it's on a local network: CamAgent never lets the website send it
     (with a camera's login) to an address on the internet."""
@@ -47,7 +67,7 @@ def _local_host(job):
         ip = ipaddress.ip_address(host)
     except ValueError:
         raise ValueError("That isn't a camera address on this network") from None
-    if not (ip.is_private or ip.is_link_local) or ip.is_loopback or ip.is_multicast:
+    if not _lan_address(ip):
         raise ValueError("CamAgent only connects to cameras on this computer's own network")
     try:
         port = int((job.get("payload") or {}).get("port") or 80)
@@ -94,19 +114,34 @@ def _snapshot(job):
     from urllib.parse import urlparse
     if urlparse(url).scheme != "rtsp" or urlparse(url).hostname != host:
         raise ValueError("That video address isn't the camera's")
-    ffmpeg = camera.find_ffmpeg("")
+    from .prereqs import unprivileged
+    ffmpeg = _safe_ffmpeg(camera.find_ffmpeg(""))
     if not ffmpeg:
         raise ValueError("ffmpeg isn't installed on this computer. Install it, then try again")
     r = subprocess.run([ffmpeg, "-hide_banner", "-loglevel", "error", "-rtsp_transport", "tcp", "-i",
                         rtsp_with_auth(url, user, pw), "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "6",
                         "-f", "image2", "-c:v", "mjpeg", "pipe:1"], capture_output=True, timeout=25,
-                       stdin=subprocess.DEVNULL)
+                       stdin=subprocess.DEVNULL, **unprivileged())
     if r.returncode or not r.stdout:
         raise ValueError(config.scrub((r.stderr or b"").decode("utf-8", "replace").strip()[-200:])
                          or "CamAgent got no picture from the camera")
     if len(r.stdout) > 120_000:
         raise ValueError("The camera's picture is too big for CamAgent to send")
     return {"jpeg": base64.b64encode(r.stdout).decode("ascii")}
+
+
+UNSAFE_FFMPEG = ("ffmpeg at {path} is in a folder any user of this computer can change. CamAgent's setup helper "
+                 "won't run it with full system rights. To fix this, open an administrator window and type winget "
+                 "install -e --id Gyan.FFmpeg --scope machine --force. Then try again")
+
+
+def _safe_ffmpeg(ffmpeg):
+    """The ffmpeg this helper may run (as SYSTEM on Windows): never one in a folder a normal user can change, where
+    anyone could swap it for their own program (0.23). "" stays "" (not installed)."""
+    from .prereqs import admin_only_location
+    if ffmpeg and not admin_only_location(ffmpeg):
+        raise ValueError(UNSAFE_FFMPEG.format(path=ffmpeg))
+    return ffmpeg
 
 
 def _ptz_test(job):
@@ -128,20 +163,12 @@ def _stage(job):
     user, pw = _login(job)
     p = job.get("payload") or {}
     path = _pending_file(p.get("setup"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        os.chmod(path.parent, 0o700)           # only CamAgent's administrator side (this helper) reads these
-    except OSError:
-        pass
+    config.ensure_remote_dir("pending")         # root's own folder: only this helper reads these
     data = {"host": host, "onvif_port": port, "username": user, "password": secret.protect(pw),
             "rtsp_url": str(p.get("rtsp_url") or "")[:300], "ptz": bool(p.get("ptz")),
             "ptz_profile": str(p.get("token") or "")[:64], "convert": p.get("convert") == "1080p",
             "source_height": _int(p.get("source_height")), "staged": int(time.time())}
-    path.write_text(json.dumps(data), encoding="utf-8")
-    try:
-        os.chmod(path, 0o600)
-    except OSError:
-        pass
+    config.write_private(path, json.dumps(data), 0o600)
     return {"staged": True}
 
 
@@ -160,12 +187,13 @@ def _pending_file(setup_id):
     setup_id = str(setup_id or "")
     if not setup_id.isalnum() or len(setup_id) > 40:
         raise ValueError("That setup ID isn't valid")
-    return config.state_dir() / "pending" / f"{setup_id}.json"
+    return config.remote_dir() / "pending" / f"{setup_id}.json"
 
 
 def _forget(job):
     """Delete a kept setup (YonderView turned the request down, or the host took it back)."""
     path = _pending_file((job.get("payload") or {}).get("setup"))
+    config.ensure_remote_dir("pending")
     existed = path.exists()
     path.unlink(missing_ok=True)
     return {"forgotten": existed}
@@ -173,7 +201,11 @@ def _forget(job):
 
 def prune_pending(now=None):
     """Kept setups older than PENDING_DAYS are deleted, logins and all."""
-    folder = config.state_dir() / "pending"
+    try:
+        folder = config.ensure_remote_dir("pending")
+    except OSError as e:
+        log.warning("couldn't check the kept camera setups: %s", e)
+        return
     now = now or time.time()
     for f in folder.glob("*.json") if folder.exists() else []:
         try:
@@ -193,6 +225,7 @@ def _camera_details(job):
     if p.get("setup"):
         path = _pending_file(p["setup"])
         try:
+            config.ensure_remote_dir("pending")
             d = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             raise ValueError("CamAgent no longer has this camera's setup. CamAgent keeps a setup for 30 days. Set the "
@@ -259,7 +292,8 @@ def _connect(job):
         if not ffmpeg:
             raise ValueError("This camera's video is bigger than 1080p, and ffmpeg isn't installed to convert it. "
                              "Install ffmpeg, then try again")
-        method = convert.best(convert.detect(ffmpeg, timeout=20))
+        from .prereqs import unprivileged
+        method = convert.best(convert.detect(_safe_ffmpeg(ffmpeg), timeout=20, run_as=unprivileged()))
         if not method:
             raise ValueError("This computer can't convert the camera's video to 1080p. Set the camera itself to "
                              "1080p")
@@ -351,7 +385,7 @@ def capability():
     """The last video test's summary, or None (not tested yet)."""
     import json
     try:
-        return json.loads((config.state_dir() / CAPABILITY_FILE).read_text(encoding="utf-8"))
+        return json.loads((config.remote_dir() / CAPABILITY_FILE).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
 
@@ -376,10 +410,16 @@ def measure(cfg_path=None):
         configured = cams[0]["stream"].get("ffmpeg", "") if cams else ""
     except Exception:  # noqa: BLE001
         configured = ""
+    from .prereqs import unprivileged
     ffmpeg = camera.find_ffmpeg(configured)
     if not ffmpeg:
         return None
-    results = convert.detect(ffmpeg, size="1920x1080", timeout=20)
+    try:
+        _safe_ffmpeg(ffmpeg)
+    except ValueError as e:
+        log.warning("video test skipped: %s", e)
+        return None
+    results = convert.detect(ffmpeg, size="1920x1080", timeout=20, run_as=unprivileged())
     gpu = next(((m, s) for m, s in results if s and m in GPU_METHODS
                  and s >= MIN_SPEED_BY_METHOD.get(m, MIN_SPEED)), None)
     cpu = next((s for m, s in results if m == "x264"), None)
@@ -388,9 +428,7 @@ def measure(cfg_path=None):
            "fp": _fingerprint(ffmpeg)}
     if gpu and gpu[0] in MAX_SOURCE:
         out["max_source"] = MAX_SOURCE[gpu[0]]         # lower resolutions only for cameras at or below this height
-    path = config.state_dir() / CAPABILITY_FILE
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(out), encoding="utf-8")
+    config.write_private(config.ensure_remote_dir() / CAPABILITY_FILE, json.dumps(out), 0o644)
     log.info("video test: %s", f"{out['gpu_label']} at {out['gpu_speed']}x" if gpu else "no usable graphics chip")
     return out
 

@@ -31,7 +31,7 @@ with redirect_stdout(buf), mock.patch("builtins.input", return_value=""), \
 assert oc.call_count == 3
 text = buf.getvalue()
 assert text.count("lock you out after a few wrong tries") == 1
-assert text.index("lock you out") < text.index("CamAgent is checking the login")
+assert text.index("lock you out") < text.index("Checking the login")
 # step 2 also refuses to try once the limit is reached
 configure._reset_login_tries()
 configure._login_state["tries"] = 3
@@ -106,7 +106,7 @@ with mock.patch.object(remote, "_account", return_value=site), \
     assert remote.run(once=True) == "error"
 
 # ---- 4. update results on the Health tab ----
-with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "state_dir", return_value=Path(d)):
+with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "remote_dir", return_value=Path(d)):
     assert prereqs.update_notice() == ""
     update._record(False, "0.99.1", "the install didn't work (disk full)")
     saved = json.loads((Path(d) / "update_result.json").read_text())
@@ -173,7 +173,7 @@ if os.name != "nt":
 
 # ---- 6. video test threshold ----
 results = [("v4l2m2m", 1.0), ("x264", 0.6)]
-with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "state_dir", return_value=Path(d)), \
+with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "remote_dir", return_value=Path(d)), \
         mock.patch.object(camera, "find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
         mock.patch("camagent.convert.detect", return_value=results), \
         mock.patch.object(config, "load_all", return_value=({}, [], [])):
@@ -250,5 +250,6 @@ assert _g._error_line("x\n[scale_d3d11] Failed to create device\nConversion fail
 print("v0.21.3 gpu-test sizes and errors OK")
 
 # ---- 0.22.2: scale_d3d11 takes width/height (ffmpeg 9 refused w=-2) ----
-assert "scale_d3d11=width=1280:height=720" in [w[2](720) for w in _g.ways("amf")]
+assert "scale_d3d11=width=1280:height=720:format=nv12" in [w[2](720) for w in _g.ways("amf")]
+assert any(w[1] == [] for w in _g.ways("amf"))                # the "lite" fallback is tried too
 print("v0.22.2 scale_d3d11 options OK")

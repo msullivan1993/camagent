@@ -113,7 +113,7 @@ def relaunch(config_path=None):
     import sys
     # -I: Python ignores the current folder (and PYTHON* settings), as everywhere CamAgent starts itself
     args = [sys.executable, "-I", "-m", "camagent"] + (["--config", str(config_path)] if config_path else [])
-    print("CamAgent is reopening the menu on the new version...\n")
+    print("Reopening the menu on the new version...\n")
     sys.stdout.flush()
     if os.name == "nt":                      # Windows: run the new menu here, then leave when it closes
         raise SystemExit(subprocess.call(args))

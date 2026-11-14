@@ -78,7 +78,7 @@ with mock.patch("camagent.camera.find_ffmpeg", return_value="ffmpeg"), \
                               "rtsp_url": "rtsp://172.16.20.113:554/live"}, "secret": secret_login})
 assert ok and out["jpeg"]
 # keeping the setup for later: the login encrypted where it can be (Windows/Linux key)
-with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir", return_value=Path(d)), \
+with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.remote_dir", return_value=Path(d)), \
         mock.patch("camagent.secret.protect", side_effect=lambda v: "sealed:" + v[::-1]):
     ok, out = remote.run_job({"id": 5, "kind": "stage", "payload": {"host": "172.16.20.113", "setup": "abc123",
                               "rtsp_url": "rtsp://172.16.20.113:554/live", "ptz": True, "token": "p0"},
@@ -109,7 +109,7 @@ BLOCK = ("SRT_URL=srt://ingest.example:8890?streamid=publish:kyx0001:kyx0001:srt
 with tempfile.TemporaryDirectory() as d:
     d = Path(d)
     main_path = d / "camagent.toml"
-    with mock.patch("camagent.config.state_dir", return_value=d / "state"), \
+    with mock.patch("camagent.config.remote_dir", return_value=d / "state"), \
             mock.patch("camagent.secret.protect", side_effect=lambda v: v), \
             mock.patch("camagent.secret.unprotect", side_effect=lambda v: v):
         remote._cfg_path = main_path
@@ -154,7 +154,7 @@ with tempfile.TemporaryDirectory() as d:
 print("v0.19 connect OK")
 
 # ---- 0.20: the video test, measured once and told to the website ----
-with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir", return_value=Path(d)), \
+with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.remote_dir", return_value=Path(d)), \
         mock.patch("camagent.camera.find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
         mock.patch("camagent.convert.detect", return_value=[("vaapi", None), ("qsv", 4.2), ("x264", 0.9)]):
     cap = remote.measure()
@@ -164,7 +164,7 @@ with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir",
     with mock.patch("threading.Thread") as th:              # same hardware and ffmpeg: not tested again
         remote._measure_if_needed(Path(d) / "camagent.toml")
         assert not th.called
-with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.state_dir", return_value=Path(d)), \
+with tempfile.TemporaryDirectory() as d, mock.patch("camagent.config.remote_dir", return_value=Path(d)), \
         mock.patch("camagent.camera.find_ffmpeg", return_value="/usr/bin/ffmpeg"), \
         mock.patch("camagent.convert.detect", return_value=[("v4l2m2m", 0.8), ("x264", 0.4)]):
     cap = remote.measure()
