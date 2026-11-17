@@ -377,12 +377,37 @@ def restart(remote=True):
         print('CamAgent isn\'t running in the background yet. Open CamAgent and choose "Start CamAgent".')
         return
     if os.name == "nt":
-        exe, _ = _win_paths()
-        _run([exe, "restart"])
+        _win_restart()
     else:
         _run(["systemctl", "restart", SERVICE])
     if remote:
         restart_remote()
+
+
+def _win_state():
+    """Windows' state for the service: "RUNNING", "STOPPED", "STOP_PENDING"... ("" if sc can't tell)."""
+    r = subprocess.run(["sc", "query", SERVICE], capture_output=True, text=True)
+    for line in (r.stdout or "").splitlines():
+        if "STATE" in line:
+            return line.split()[-1]
+    return ""
+
+
+def _win_restart(wait_s=60):
+    """Stop, wait until Windows says it has stopped, then start (0.24.1). WinSW's own "restart" starts again right
+    away, and Windows refused with error 1056 ("already running") while the old CamAgent was still shutting down."""
+    import time
+    exe, _ = _win_paths()
+    _run([exe, "stop"], check=False)
+    deadline = time.time() + wait_s
+    while _win_state() not in ("STOPPED", "") and time.time() < deadline:
+        time.sleep(1)
+    for attempt in range(5):
+        if _run([exe, "start"], check=False).returncode == 0 or _win_state() == "RUNNING":
+            return
+        time.sleep(3)                     # still letting go: try again
+    raise RuntimeError("CamAgent didn't start again. Open CamAgent and choose \"Start CamAgent\", or restart this "
+                       "computer.")
 
 
 def restart_remote():

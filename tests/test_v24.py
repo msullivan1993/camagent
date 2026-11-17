@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from camagent import agent, config, controls, link, remote, text  # noqa: E402
+from camagent import agent, config, controls, link, remote, service, text  # noqa: E402
 from camagent._onvif import client as onvif_client  # noqa: E402
 
 tmp = Path(tempfile.mkdtemp())
@@ -107,5 +107,15 @@ with mock.patch.object(agent, "Supervisor", side_effect=fake_supervisor):
     gate.wait.return_value = True                                                             # stopping
     assert agent.wait_for_cameras("cfg", every=0, stop=gate) is None
 assert issubclass(agent.NoCameras, SystemExit)                                                # `camagent run` by hand
+
+# 7. Windows restart (0.24.1): stop, wait until stopped, then start; a refused start is tried again
+ran, states = [], iter(["STOP_PENDING", "STOP_PENDING", "STOPPED", "STOPPED"])
+with mock.patch.object(service, "_win_paths", return_value=("svc.exe", "svc.xml")), \
+        mock.patch.object(service, "_win_state", side_effect=lambda: next(states, "RUNNING")), \
+        mock.patch.object(service, "_run", side_effect=lambda cmd, check=True: ran.append(cmd[1]) or
+                          mock.Mock(returncode=1056 if ran.count("start") == 1 else 0)), \
+        mock.patch("time.sleep"):
+    service._win_restart()
+assert ran == ["stop", "start", "start"], ran                     # never WinSW's "restart" (start came too soon)
 
 print("OK")
