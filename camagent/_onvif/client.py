@@ -240,12 +240,33 @@ class ONVIFCamera(object):
             except Exception:
                 logger.exception('Unexpected service type')
 
+        # CamAgent 0.24: no alarm sign-up here. The original library signed up for the camera's alarms on every
+        # connection and never cancelled; cameras keep only a few sign-ups, and a full list made one Amcrest stop
+        # acting on PTZ moves (2026-11-16). Sign up only when needed: subscribe_pullpoint().
         with self.services_lock:
             try:
                 self.event = self.create_events_service()
-                self.xaddrs['http://www.onvif.org/ver10/events/wsdl/PullPointSubscription'] = self.event.CreatePullPointSubscription().SubscriptionReference.Address._value_1
-            except:
+            except Exception:
                 pass
+
+    PULLPOINT_NS = 'http://www.onvif.org/ver10/events/wsdl/PullPointSubscription'
+    MANAGER_NS = 'http://www.onvif.org/ver10/events/wsdl/SubscriptionManager'
+
+    def subscribe_pullpoint(self):
+        '''Sign up for the camera's alarms: (pull-point service, cancel). Call cancel() when done with it.'''
+        sub = self.create_events_service().CreatePullPointSubscription()
+        address = sub.SubscriptionReference.Address._value_1
+        self.xaddrs[self.PULLPOINT_NS] = address
+        self.xaddrs[self.MANAGER_NS] = address
+        pull = self.create_pullpoint_service()
+
+        def cancel():
+            try:
+                self.xaddrs[self.MANAGER_NS] = address
+                self.create_onvif_service('subscription', portType='SubscriptionManager').Unsubscribe()
+            except Exception:
+                pass                  # gone already, or the camera doesn't cancel: it expires on its own
+        return pull, cancel
 
     def update_url(self, host=None, port=None):
         changed = False

@@ -108,8 +108,15 @@ def main(argv=None):
         logging.getLogger("zeep").setLevel(logging.WARNING)
         from .tools import install_ring
         install_ring()                              # the recent log, for the camera's Health tab
-        from .agent import Supervisor
-        Supervisor(cfg_path).run()
+        from .agent import NoCameras, Supervisor, wait_for_cameras
+        try:
+            sup = Supervisor(cfg_path)
+        except NoCameras:
+            if sys.stdin is not None and sys.stdin.isatty():
+                raise                              # someone typed `camagent run`: tell them, don't hang
+            sup = wait_for_cameras(cfg_path)       # the service: wait quietly instead of restarting every 5 s
+        if sup:
+            sup.run()
 
     elif args.cmd in ("configure", "add", "remove"):
         from . import configure

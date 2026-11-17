@@ -681,6 +681,27 @@ def _restart_asked():
     return tools.RESTART.is_set()
 
 
+NO_CAMERAS = "You haven't set up any cameras. To add one, type: camagent add"
+
+
+class NoCameras(SystemExit):
+    pass
+
+
+def wait_for_cameras(cfg_path, every=60, stop=None):
+    """The service with no camera yet (0.24): wait quietly and look again every minute, instead of quitting and
+    being restarted every 5 seconds (one Pi logged 140 restarts before its first camera). Website setup and
+    `camagent add` restart CamAgent anyway once a camera is added. Returns the Supervisor once there is one."""
+    stop = stop or threading.Event()
+    log.info("%s. CamAgent waits and checks again every minute.", NO_CAMERAS)
+    while not stop.wait(every):
+        try:
+            return Supervisor(cfg_path)
+        except NoCameras:
+            continue
+    return None
+
+
 class Supervisor:
     """Runs every configured camera. A camera with a broken config is reported and skipped."""
 
@@ -700,7 +721,7 @@ class Supervisor:
             except ValueError as e:
                 log.error("camera '%s' not started: %s (fix with: camagent configure %s)", cid, e, cid)
         if not self.agents:
-            raise SystemExit("You haven't set up any cameras. To add one, type: camagent add")
+            raise NoCameras(NO_CAMERAS)
         self.stopping = threading.Event()
         self.started = time.time()
 

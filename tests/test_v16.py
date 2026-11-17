@@ -214,11 +214,13 @@ class Stop:
 
 
 pull = mock.Mock(PullMessages=mock.Mock(side_effect=RuntimeError("NoSubscribe")))
-onvif = mock.Mock(create_pullpoint_service=mock.Mock(return_value=pull))
+cancel = mock.Mock()
+onvif = mock.Mock(subscribe_pullpoint=mock.Mock(return_value=(pull, cancel)))
 c = C.Controls.__new__(C.Controls)
 c.p, c.caps, c.log = mock.Mock(onvif=onvif), {}, mock.Mock()
 c.watch_events(Stop(), lambda e: None)
 assert waits == [60, 120, 240, 480, 960, 1920, 3600, 3600, 3600], waits
 assert c.log.info.call_count < len(waits)                              # not one line per try
+assert cancel.call_count >= len(waits)                                 # 0.24: each failed sign-up cancelled
 
 print("OK")

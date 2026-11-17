@@ -12,6 +12,7 @@ the website might send is answered "unknown" and ignored. Without a link (signed
 0.19: "connect" sets up an approved camera (from a setup kept with its camera request, or a login sent with the job)
 and "forget" deletes a kept setup; kept setups are deleted by themselves after 30 days.
 """
+import json
 import logging
 import os
 import platform
@@ -530,6 +531,7 @@ def run(cfg_path=None, once=False, sleep=time.sleep):
         try:
             reply = link.checkin(site, token, _info(cfg_path))
             backoff = 5
+            sync_wording(site, token, reply.get("wording"))
             for job in reply.get("jobs") or []:
                 if not isinstance(job, dict) or not isinstance(job.get("id"), int):
                     continue
@@ -595,3 +597,36 @@ def main(cfg_path=None):
     if run(cfg_path) == "updated":
         return 75                          # systemd (Restart=always) or the Windows task starts the new version
     return 0
+
+
+def sync_wording(site, token, fingerprint):
+    """Website wording (0.24): when the check-in's fingerprint differs from the saved one, fetch staff's changes and
+    save them for CamAgent's windows (camagent/text.py uses them at start). "" means: back to the built-in wording.
+    None (an older website) changes nothing. Never stops the helper."""
+    from . import text
+    if fingerprint is None or not isinstance(fingerprint, str):
+        return
+    path = config.remote_dir() / text.WORDING_FILE
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8")).get("v", "")
+    except Exception:  # noqa: BLE001
+        saved = ""
+    if fingerprint == saved:
+        return
+    try:
+        if not fingerprint:
+            path.unlink(missing_ok=True)
+            log.info("CamAgent's wording: back to the built-in wording")
+            return
+        got = link.wording(site, token)
+        texts = got.get("texts") if isinstance(got.get("texts"), dict) else {}
+        keep = {k: v for k, v in texts.items() if text.usable(k, v)}
+        config.ensure_remote_dir()
+        config.write_private(path, json.dumps({"v": str(got.get("v", ""))[:64], "texts": keep}, ensure_ascii=False),
+                             mode=0o644)
+        log.info("CamAgent's wording: %s change%s from YonderView (used from the next start)", len(keep),
+                 "" if len(keep) == 1 else "s")
+    except link.NotSignedIn:
+        raise
+    except Exception as e:  # noqa: BLE001
+        log.info("couldn't update CamAgent's wording (%s); trying again later", e)

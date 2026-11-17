@@ -331,37 +331,41 @@ class Controls:
         pull-point subscription. Cameras without event support are simply left alone."""
         cam = self.p.onvif
         try:
-            cam.create_events_service().CreatePullPointSubscription()
-            pull = cam.create_pullpoint_service()
+            pull, cancel = cam.subscribe_pullpoint()
         except Exception as e:  # noqa: BLE001
             self.caps["events"] = False
             self.log.info("camera alarms not available: %s", e)
             return
         self.caps["events"] = True
         fails = 0
-        while not stop.is_set():
-            try:
-                got = pull.PullMessages({"Timeout": "PT30S", "MessageLimit": 20})
-                fails = 0
-            except Exception as e:  # noqa: BLE001
-                # some cameras accept the subscription but never deliver (e.g. "NoSubscribe"): wait longer each time
-                # (1, 2, 4... minutes, at most an hour) and log it now and then, not every minute
-                fails += 1
-                wait = min(60 * 2 ** (fails - 1), 3600)
-                if fails <= 3 or wait < 3600 or fails % 24 == 0:
-                    self.log.info("camera alarm feed interrupted: %s; trying again in %s", e,
-                                  f"{wait // 60} minute{'s' if wait != 60 else ''}")
-                stop.wait(wait)
+        try:
+            while not stop.is_set():
                 try:
-                    cam.create_events_service().CreatePullPointSubscription()
-                    pull = cam.create_pullpoint_service()
-                except Exception:  # noqa: BLE001
-                    pass
-                continue
-            for msg in getattr(got, "NotificationMessage", None) or []:
-                topic = str(getattr(getattr(msg, "Topic", None), "_value_1", "") or getattr(msg, "Topic", ""))
-                if any(w in topic.lower().replace("/", "") for w in TAMPER_WORDS) and _event_active(msg):
-                    on_event({"kind": "tamper", "topic": topic.split("/")[-1] or topic, "t": int(time.time())})
+                    got = pull.PullMessages({"Timeout": "PT30S", "MessageLimit": 20})
+                    fails = 0
+                except Exception as e:  # noqa: BLE001
+                    # cancel this sign-up before making a new one (0.24: cameras keep only a few; a full list stopped
+                    # an Amcrest's PTZ). Some cameras accept the sign-up but never deliver ("NoSubscribe"): wait
+                    # longer each time (1, 2, 4... minutes, at most an hour) and log it now and then
+                    cancel()
+                    fails += 1
+                    wait = min(60 * 2 ** (fails - 1), 3600)
+                    if fails <= 3 or wait < 3600 or fails % 24 == 0:
+                        self.log.info("camera alarm feed interrupted: %s; trying again in %s", e,
+                                      f"{wait // 60} minute{'s' if wait != 60 else ''}")
+                    if stop.wait(wait):
+                        return
+                    try:
+                        pull, cancel = cam.subscribe_pullpoint()
+                    except Exception:  # noqa: BLE001
+                        cancel = lambda: None  # noqa: E731  (nothing to cancel; PullMessages fails and we wait again)
+                    continue
+                for msg in getattr(got, "NotificationMessage", None) or []:
+                    topic = str(getattr(getattr(msg, "Topic", None), "_value_1", "") or getattr(msg, "Topic", ""))
+                    if any(w in topic.lower().replace("/", "") for w in TAMPER_WORDS) and _event_active(msg):
+                        on_event({"kind": "tamper", "topic": topic.split("/")[-1] or topic, "t": int(time.time())})
+        finally:
+            cancel()                  # stopping (CamAgent restarting or the camera removed): leave no sign-up behind
 
     def _safe(self, fn):
         try:

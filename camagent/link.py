@@ -215,6 +215,16 @@ def checkin(site, token, info):
     return d if isinstance(d, dict) else {}
 
 
+def wording(site, token):
+    """Staff's changes to CamAgent's wording (0.24): {"v": fingerprint, "texts": {NAME: text}}."""
+    status, d = _call(site, "GET", "/api/agent/wording", None, token=token)
+    if status == 401:
+        raise NotSignedIn(SIGNED_OUT)
+    if status != 200 or not isinstance(d, dict):
+        raise LinkError(f"YonderView answered {status}")
+    return d
+
+
 def job_result(site, token, job_id, ok, out):
     body = {"ok": True, "result": out} if ok else {"ok": False, "error": str(out)[:300]}
     status, _ = _call(site, "POST", f"/api/agent/jobs/{int(job_id)}", body, token=token)

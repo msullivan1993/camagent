@@ -7,6 +7,8 @@ SERVICES = {
         'deviceio'  : {'ns': 'http://www.onvif.org/ver10/deviceIO/wsdl',  'wsdl': 'deviceio.wsdl',   'binding' : 'DeviceIOBinding'},
         'events'    : {'ns': 'http://www.onvif.org/ver10/events/wsdl',    'wsdl': 'events.wsdl',     'binding' : 'EventBinding'},
         'pullpoint' : {'ns': 'http://www.onvif.org/ver10/events/wsdl',    'wsdl': 'events.wsdl',     'binding' : 'PullPointSubscriptionBinding'},
+        # CamAgent 0.24: to cancel an alarm sign-up (Unsubscribe lives on the subscription manager binding)
+        'subscription': {'ns': 'http://www.onvif.org/ver10/events/wsdl',  'wsdl': 'events.wsdl',     'binding' : 'SubscriptionManagerBinding'},
         'analytics' : {'ns': 'http://www.onvif.org/ver20/analytics/wsdl', 'wsdl': 'analytics.wsdl',  'binding' : 'AnalyticsEngineBinding'},
         'recording' : {'ns': 'http://www.onvif.org/ver10/recording/wsdl', 'wsdl': 'recording.wsdl',  'binding' : 'RecordingBinding'},
         'search'    : {'ns': 'http://www.onvif.org/ver10/search/wsdl',    'wsdl': 'search.wsdl',     'binding' : 'SearchBinding'},

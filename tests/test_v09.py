@@ -77,7 +77,7 @@ pull = mock.Mock()
 stop = threading.Event()
 pull.PullMessages.side_effect = lambda *_: (stop.set(), NS(NotificationMessage=[msg]))[1]
 s2 = NS(onvif=mock.Mock(), token="p0", source="vs0", ptz=None)
-s2.onvif.create_pullpoint_service.return_value = pull
+s2.onvif.subscribe_pullpoint.return_value = (pull, mock.Mock())    # 0.24: sign up, cancel later
 cc = Controls(s2)
 cc.watch_events(stop, events.append)
 assert events and events[0]["kind"] == "tamper" and events[0]["topic"] == "ImagingService" and cc.caps["events"]

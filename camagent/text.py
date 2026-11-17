@@ -11,6 +11,10 @@ HOW TO EDIT THIS FILE (plain words)
   * After you edit, save the file and run CamAgent again. A typo in the quotes stops CamAgent from starting.
     Then undo your last change.
 Not everything is here yet. Error messages and some small prompts are still inside the other files.
+
+YonderView staff can also change these on the website (Staff > Wording). A linked computer picks up the changes
+when it checks in (0.24): the setup helper saves them, and CamAgent uses them the next time it starts. CamAgent
+uses a change only if it keeps this file's {placeholders} and is plain text; otherwise it keeps the words here.
 """
 
 # ---------------------------------------------------------------------------------------------------------
@@ -301,3 +305,59 @@ You're done. Within a minute, open yonderview.net, find your camera and check th
     If something looks wrong, choose "Check for problems".
   * Stuck? Choose "Report a problem" on yonderview.net.
 """
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Wording from the website (0.24): staff's changes, saved by the setup helper (camagent/remote.py)
+# ---------------------------------------------------------------------------------------------------------
+_BUILT_IN = {k: v for k, v in dict(globals()).items() if k.isupper() and isinstance(v, str)}
+WORDING_FILE = "wording.json"           # in config.remote_dir(), written only by the helper (root / Administrators)
+MAX_TEXT = 4000
+
+
+def usable(name, new):
+    """True if the website's text for this name can replace the built-in one safely."""
+    import string
+    old = _BUILT_IN.get(name)
+    if old is None or not isinstance(new, str) or not new.strip() or len(new) > MAX_TEXT:
+        return False
+    if any(ord(c) < 32 and c not in "\n\t" for c in new) or "\x1b" in new:
+        return False                    # no terminal control codes
+
+    def fields(text):
+        out = set()
+        for _, field, spec, conv in string.Formatter().parse(text):
+            if field is not None:
+                if not field.isidentifier() or spec or conv:
+                    raise ValueError(field)
+                out.add(field)
+        return out
+    try:
+        return fields(new) <= fields(old)      # may move or drop {names}, never add one (str.format would fail)
+    except ValueError:
+        return False
+
+
+def use_website_wording(path=None):
+    """Replace built-in texts with the website's, where usable. Never stops CamAgent: on any problem it keeps
+    the built-in wording. Returns how many texts changed."""
+    import json
+    try:
+        if path is None:
+            from .config import remote_dir
+            path = remote_dir() / WORDING_FILE
+        data = json.loads(path.read_text(encoding="utf-8"))
+        texts = data.get("texts") if isinstance(data, dict) else None
+        if not isinstance(texts, dict):
+            return 0
+    except Exception:  # noqa: BLE001  (no file, can't read it, not JSON: the built-in wording stays)
+        return 0
+    changed = 0
+    for name, new in texts.items():
+        if usable(name, new):
+            globals()[name] = new
+            changed += 1
+    return changed
+
+
+use_website_wording()
