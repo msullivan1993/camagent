@@ -45,11 +45,25 @@ assert "hwdownload,format=nv12" in s480 and s480.index("hwdownload") < s480.inde
     and s480.endswith("format=nv12[o1]"), s480
 assert "hwdownload" not in graph.split(";")[1]                        # the unmarked 720p stays in hardware
 
-# 4. ffmpeg-rockchip in /opt is found first (after a configured one) on Linux
-with mock.patch.object(prereqs, "WINDOWS", False), \
-        mock.patch.object(prereqs, "is_file", side_effect=lambda p: str(p) == prereqs.ROCKCHIP_FFMPEG), \
-        mock.patch.object(prereqs, "which", return_value="/usr/bin/ffmpeg"), \
-        mock.patch.object(prereqs, "admin_only_location", return_value=True):
-    assert prereqs.find_ffmpeg() == prereqs.ROCKCHIP_FFMPEG
+# 4. ffmpeg-rockchip in /opt: found first; it takes over from a regular ffmpeg saved at setup (0.25.1), not from
+#    one the host put elsewhere; a build that can't send SRT is never used
+def find(configured, srt=True):
+    exists = {prereqs.ROCKCHIP_FFMPEG, "/usr/bin/ffmpeg", "/home/me/ffmpeg"}
+    with mock.patch.object(prereqs, "WINDOWS", False), \
+            mock.patch.object(prereqs, "is_file", side_effect=lambda p: str(p) in exists), \
+            mock.patch.object(prereqs, "which", return_value="/usr/bin/ffmpeg"), \
+            mock.patch.object(prereqs, "rockchip_ffmpeg_ok", return_value=srt), \
+            mock.patch.object(prereqs, "admin_only_location", return_value=True):
+        return prereqs.find_ffmpeg(configured)
+assert find("") == prereqs.ROCKCHIP_FFMPEG
+assert find("/usr/bin/ffmpeg") == prereqs.ROCKCHIP_FFMPEG                # saved before the build: replaced
+assert find("/home/me/ffmpeg") == "/home/me/ffmpeg"                      # the host's own choice stays
+assert find("/usr/bin/ffmpeg", srt=False) == "/usr/bin/ffmpeg"           # no SRT: never the Rockchip build
+assert find("", srt=False) == "/usr/bin/ffmpeg"
+prereqs._rockchip_checked.clear()
+with mock.patch("subprocess.run", return_value=mock.Mock(stdout="Supported file protocols:\nInput:\n  rtsp\nOutput:\n  srt\n")):
+    assert prereqs.rockchip_ffmpeg_ok("/x/ffmpeg")
+with mock.patch("subprocess.run", return_value=mock.Mock(stdout="Output:\n  rtmp\n")):
+    assert not prereqs.rockchip_ffmpeg_ok("/y/ffmpeg")
 
 print("OK")

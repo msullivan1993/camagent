@@ -165,6 +165,19 @@ def _windows_ffmpeg_candidates():
 
 
 ROCKCHIP_FFMPEG = "/opt/ffmpeg-rockchip/bin/ffmpeg"     # scripts/build-ffmpeg-rockchip.sh installs it here
+_rockchip_checked = {}
+
+
+def rockchip_ffmpeg_ok(path=ROCKCHIP_FFMPEG):
+    """Can this Rockchip build send video to YonderView (SRT)? A build without it would keep the camera off the air
+    (0.25.0 on the first ROCK 4D: "Protocol not found"), so CamAgent then keeps the regular ffmpeg. Checked once."""
+    if path not in _rockchip_checked:
+        try:
+            out = subprocess.run([path, "-hide_banner", "-protocols"], capture_output=True, text=True, timeout=15).stdout
+            _rockchip_checked[path] = "srt" in out.split()
+        except (OSError, subprocess.TimeoutExpired):
+            _rockchip_checked[path] = False
+    return _rockchip_checked[path]
 
 
 def find_ffmpeg(configured=""):
@@ -175,8 +188,11 @@ def find_ffmpeg(configured=""):
     picks = []
     if configured and is_file(configured):
         picks.append(configured)
-    if not WINDOWS and is_file(ROCKCHIP_FFMPEG):
-        picks.append(ROCKCHIP_FFMPEG)        # a Rockchip build (0.25): uses the board's video hardware
+    if not WINDOWS and is_file(ROCKCHIP_FFMPEG) and rockchip_ffmpeg_ok():
+        # a Rockchip build (0.25): uses the board's video hardware. It also takes over from a regular ffmpeg that
+        # setup saved before the build was installed (0.25.1); an ffmpeg the host named elsewhere stays first.
+        regular = configured.startswith("/usr/") or (bool(which("ffmpeg")) and configured == which("ffmpeg"))
+        picks.insert(0 if (not configured or regular) else len(picks), ROCKCHIP_FFMPEG)
     found = which("ffmpeg")
     if found:
         picks.append(found)
