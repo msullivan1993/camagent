@@ -75,11 +75,21 @@ def encoder(method):
     return [], ["-c:v", "libx264", "-preset", preset, "-tune", "zerolatency"], "format=yuv420p"
 
 
+LINUX_FONTS = ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",          # Debian, Ubuntu, Raspberry Pi OS
+               "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",        # Fedora
+               "/usr/share/fonts/TTF/DejaVuSans.ttf")                      # Arch
+
+
 def _font():
     """The font for the mark's text. Windows' ffmpeg builds have no font configuration ("Fontconfig error: Cannot
     load default config file", 0.17.4 on a new mini PC: the host-made versions never started), so name a font file
     there; elsewhere fontconfig finds it by name."""
     if os.name != "nt":
+        # name the file where it's in a usual place: builds without fontconfig (ffmpeg-rockchip on a ROCK 4D, 0.25.2:
+        # "Error applying option 'font' to filter 'drawtext'") can't find a font by name
+        for path in LINUX_FONTS:
+            if os.path.isfile(path):
+                return "fontfile='" + path + "'"
         return "font='DejaVu Sans'"
     fonts = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts")
     for name in ("arial.ttf", "segoeui.ttf", "tahoma.ttf", "verdana.ttf"):

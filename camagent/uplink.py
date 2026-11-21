@@ -9,6 +9,7 @@ import time
 from . import camera, convert
 from .camera import find_ffmpeg
 from .config import redact, rtsp_with_auth, scrub, srt_url
+from .prereqs import ROCKCHIP_FFMPEG
 
 
 # ffmpeg messages that are expected with many cameras and don't affect the stream
@@ -43,7 +44,7 @@ class Uplink(threading.Thread):
 
     # ---------- converting to 1080p (optional) ----------
     FAST_FAILS_TO_FALL_BACK = 3
-    LITE = {"amf": "amf-lite"}                # the same encoder with the processor decoding
+    LITE = {"amf": "amf-lite", "rkmpp": "rkmpp-lite"}     # the same encoder with the processor decoding
     AUDIO_CHECK_S = 120                       # sound missing: look for it quietly this often (video keeps going)
     AUDIO_RETRY_S = 600                       # ...or, when it can't be checked (no ffprobe), just try again this late
     NOTHING_SENT_BYTES = 32 * 1024            # less than this written out in a run: nothing really went out
@@ -60,6 +61,10 @@ class Uplink(threading.Thread):
             self.stats.pop("convert", None)
             return None
         method = s.get("encoder") or "x264"
+        if method == "x264" and convert.rockchip() and s.get("ffmpeg") == ROCKCHIP_FFMPEG:
+            # set up before ffmpeg-rockchip was installed (or while converting was off): use the board's hardware;
+            # if it fails, the usual fall-back below returns to the CPU (0.25.2)
+            method = "rkmpp"
         current = self._fell_to or method
         if current != "x264" and self._fast_fails >= self.FAST_FAILS_TO_FALL_BACK:
             # first the same GPU with the processor decoding (where there's such a step), then the CPU alone; it

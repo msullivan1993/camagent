@@ -67,3 +67,24 @@ with mock.patch("subprocess.run", return_value=mock.Mock(stdout="Output:\n  rtmp
     assert not prereqs.rockchip_ffmpeg_ok("/y/ffmpeg")
 
 print("OK")
+
+# 5. (0.25.2) the mark names a font file on Linux (ffmpeg builds without fontconfig can't find "DejaVu Sans")
+from camagent import uplink  # noqa: E402
+with mock.patch("os.name", "posix"), mock.patch("os.path.isfile", side_effect=lambda p: p == V.LINUX_FONTS[0]):
+    assert V._font() == f"fontfile='{V.LINUX_FONTS[0]}'"
+with mock.patch("os.name", "posix"), mock.patch("os.path.isfile", return_value=False):
+    assert V._font() == "font='DejaVu Sans'"
+
+# 6. (0.25.2) a camera set up with x264 uses the Rockchip hardware once ffmpeg-rockchip is its ffmpeg; failing, it
+#    steps down to encode-only, then the CPU
+u = uplink.Uplink.__new__(uplink.Uplink)
+u.cfg = {"stream": {"convert": "1080p", "encoder": "x264", "ffmpeg": prereqs.ROCKCHIP_FFMPEG, "source_height": 2160}}
+u.stats, u._fell_to, u._fast_fails, u.log = {}, None, 0, mock.Mock()
+with mock.patch.object(convert, "rockchip", return_value=True), mock.patch.object(u, "_already_fits", return_value=False):
+    assert u.convert_method() == "rkmpp"
+    u._fast_fails = u.FAST_FAILS_TO_FALL_BACK
+    assert u.convert_method() == "rkmpp-lite"
+with mock.patch.object(convert, "rockchip", return_value=False), mock.patch.object(u, "_already_fits", return_value=False):
+    u._fell_to = None; u._fast_fails = 0
+    assert u.convert_method() == "x264"                                   # not a Rockchip board: as saved
+print("0.25.2 OK")

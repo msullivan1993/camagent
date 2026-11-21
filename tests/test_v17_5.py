@@ -62,7 +62,8 @@ with mock.patch.object(versions.os, "name", "nt"), \
         mock.patch.object(versions.os.path, "isfile", return_value=True), \
         mock.patch.object(versions.os.path, "join", side_effect=lambda *p: "\\".join(p)):
     assert versions._font() == r"fontfile='C\:/Windows/Fonts/arial.ttf'", versions._font()
-with mock.patch.object(versions.os, "name", "posix"):
+with mock.patch.object(versions.os, "name", "posix"), \
+        mock.patch.object(versions.os.path, "isfile", return_value=False):    # 0.25.2: a font file wins if present
     assert versions._font() == "font='DejaVu Sans'"
 print("v0.17.5 OK")
 
