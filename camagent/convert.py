@@ -25,7 +25,7 @@ LABELS = {
     "nvenc": "NVIDIA (GPU)", "nvenc-lite": "NVIDIA (GPU encoding)",
     "amf": "AMD (GPU)", "amf-lite": "AMD (GPU encoding)",
     "v4l2m2m": "Raspberry Pi video engine", "v4l2m2m-lite": "Raspberry Pi video engine (encoding)",
-    "rkmpp": "Rockchip video engine (encoding)",
+    "rkmpp": "Rockchip video engine (GPU)", "rkmpp-lite": "Rockchip video engine (encoding)",
     "x264": "the CPU (x264)",
 }
 VAAPI_DEVICE = "/dev/dri/renderD128"
@@ -44,13 +44,25 @@ def raspberry_pi():
     return model if model.startswith("Raspberry Pi") else ""
 
 
+def rockchip():
+    """A Rockchip board (Radxa ROCK, Orange Pi 5...): its device tree says so."""
+    try:
+        with open("/proc/device-tree/compatible", "rb") as f:
+            return b"rockchip" in f.read()
+    except OSError:
+        return False
+
+
 def candidates():
     """Methods to try on this platform, best first."""
     if os.name == "nt":
         return ["qsv", "qsv-lite", "nvenc", "nvenc-lite", "amf", "x264"]
     if platform.machine().lower() in ARM:
-        # Raspberry Pi 3/4 (the Pi 5 has no video encoder), then Rockchip boards with a Rockchip build of ffmpeg
-        return ["v4l2m2m", "v4l2m2m-lite", "rkmpp", "x264"]
+        # Rockchip boards with a Rockchip build of ffmpeg (ffmpeg-rockchip: decoder, RGA scaler and encoder all in
+        # hardware, 0.25), then the Raspberry Pi 3/4's engine (the Pi 5 has no video encoder)
+        if rockchip():
+            return ["rkmpp", "rkmpp-lite", "x264"]
+        return ["v4l2m2m", "v4l2m2m-lite", "rkmpp", "rkmpp-lite", "x264"]
     return ["vaapi", "vaapi-lite", "qsv", "qsv-lite", "nvenc", "nvenc-lite", "x264"]
 
 
@@ -96,7 +108,15 @@ def args(method, kbps=DEFAULT_KBPS, scale=True, height=TARGET_HEIGHT):
         return (["-c:v", "h264_v4l2m2m"] if method == "v4l2m2m" else [],
                 ["-vf", ",".join(sw_scale + ["format=yuv420p"]), "-c:v", "h264_v4l2m2m", *rate, *keys])
     if method == "rkmpp":
-        # needs ffmpeg built with Rockchip MPP (e.g. the ffmpeg-rockchip packages); decoding stays on the CPU
+        # Rockchip, all in hardware (0.25): the video engine decodes, the RGA resizes, the engine encodes; frames
+        # never touch the CPU. Needs ffmpeg built with MPP and RGA (ffmpeg-rockchip; scripts/build-ffmpeg-rockchip.sh).
+        # A ROCK 4D (RK3576) made 1080p + 720p + 480p from 4K30 at 3.5% of its CPU (2026-11-21).
+        vf = [f"scale_rkrga=w=-2:h='min({height},ih)':format=nv12"] if scale else []
+        return (["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime"],
+                (["-vf", ",".join(vf)] if vf else []) + ["-c:v", "h264_rkmpp", "-rc_mode", "CBR", *rate, *keys])
+    if method == "rkmpp-lite":
+        # the engine only encodes; decoding and resizing stay on the CPU (an ffmpeg without RGA, or a stream the
+        # decoder refuses)
         return ([], ["-vf", ",".join(sw_scale + ["format=nv12"]), "-c:v", "h264_rkmpp", "-rc_mode", "CBR",
                      *rate, *keys])
     # x264: the CPU

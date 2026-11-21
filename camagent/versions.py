@@ -32,7 +32,7 @@ HARMLESS = ("Non-monotonic DTS", "changing to", "Past duration", "Queue input is
             "Last message repeated")                # ffmpeg repeating a note it already gave (filled the log, 0.17.13)
 
 GPU_METHODS = ("qsv", "qsv-lite", "vaapi", "vaapi-lite", "nvenc", "nvenc-lite", "amf", "amf-lite", "v4l2m2m",
-               "v4l2m2m-lite", "rkmpp")
+               "v4l2m2m-lite", "rkmpp", "rkmpp-lite")
 MAX_FAST_FAILS = 3          # ffmpeg dying this many times within FAST_S of starting: give up (the server takes over)
 FAST_S = 20
 SLOW_SPEED = 0.9            # slower than this (x real time)...
@@ -65,7 +65,10 @@ def encoder(method):
         return ["-c:v", "h264_v4l2m2m"], ["-c:v", "h264_v4l2m2m"], "format=yuv420p"
     if method == "v4l2m2m-lite":
         return [], ["-c:v", "h264_v4l2m2m"], "format=yuv420p"
-    if base == "rkmpp":
+    if method == "rkmpp":                          # Rockchip: decoding and resizing in hardware too (args())
+        return (["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime"],
+                ["-c:v", "h264_rkmpp", "-rc_mode", "CBR"], "format=nv12")
+    if method == "rkmpp-lite":
         return [], ["-c:v", "h264_rkmpp", "-rc_mode", "CBR"], "format=nv12"
     # small ARM boards (Raspberry Pi, Rockchip) need x264's fastest preset to keep up at all
     preset = "ultrafast" if platform.machine().lower() in convert.ARM else "veryfast"
@@ -150,14 +153,20 @@ def args(ffmpeg, method, src, outputs, mark_files=None, mark=None, audio=False, 
     """One ffmpeg: read the camera once, one output per version. outputs: [{suffix, height, fps, kbps, url}]."""
     pre, enc, fmt = encoder(method)
     graph = [f"[0:v]split={len(outputs)}" + "".join(f"[s{i}]" for i in range(len(outputs)))]
+    hw = method == "rkmpp"           # frames stay in the video hardware (Rockchip RGA resizes them)
     for i, o in enumerate(outputs):
-        chain = [f"scale=-2:'min({int(o['height'])},ih)'"]
+        h = int(o["height"])
+        chain = [f"scale_rkrga=w=-2:h='min({h},ih)':format=nv12" if hw else f"scale=-2:'min({h},ih)'"]
         if int(o.get("fps") or 0):
             chain.append(f"fps={int(o['fps'])}")
-        if mark and mark_files and o["suffix"] in (mark.get("on") or []):
+        marked = bool(mark and mark_files and o["suffix"] in (mark.get("on") or []))
+        if marked:
+            if hw:
+                chain.append("hwdownload,format=nv12")      # the mark is drawn on the CPU: a small picture, cheap
             chain += _mark_filters(mark_files[0], mark_files[1], mark.get("every", 15),
                                    (len(mark.get("line1") or ""), len(mark.get("line2") or "")))
-        chain.append(fmt)
+        if not hw or marked:
+            chain.append(fmt)
         graph.append(f"[s{i}]" + ",".join(chain) + f"[o{i}]")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "warning"]
     if wallclock:

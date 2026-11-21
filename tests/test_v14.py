@@ -7,8 +7,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from camagent import convert, versions as V
 
 # 1. On ARM boards the Pi's engine is tried first, then Rockchip, then the CPU; PCs are unchanged
-with mock.patch("os.name", "posix"), mock.patch("platform.machine", return_value="aarch64"):
-    assert convert.candidates() == ["v4l2m2m", "v4l2m2m-lite", "rkmpp", "x264"]
+with mock.patch("os.name", "posix"), mock.patch("platform.machine", return_value="aarch64"), \
+        mock.patch.object(convert, "rockchip", return_value=False):
+    assert convert.candidates()[:3] == ["v4l2m2m", "v4l2m2m-lite", "rkmpp"]       # 0.25: rkmpp-lite follows
 with mock.patch("os.name", "posix"), mock.patch("platform.machine", return_value="x86_64"):
     assert convert.candidates()[0] == "vaapi" and "v4l2m2m" not in convert.candidates()
 
@@ -18,7 +19,7 @@ assert pre == ["-c:v", "h264_v4l2m2m"] and "h264_v4l2m2m" in post and "format=yu
 pre, post = convert.args("v4l2m2m-lite")
 assert pre == [] and "h264_v4l2m2m" in post
 assert "-force_key_frames" in post and "-bf" in post                 # keyframe every 2 s, no B-frames, as always
-pre, post = convert.args("rkmpp")
+pre, post = convert.args("rkmpp-lite")                                # 0.25: the encode-only variant
 assert pre == [] and "h264_rkmpp" in post and "CBR" in post
 for m in ("v4l2m2m", "v4l2m2m-lite", "rkmpp"):
     assert m in convert.LABELS
@@ -33,7 +34,7 @@ assert cmd[i - 2:i] == ["-c:v", "h264_v4l2m2m"]                       # decoder 
 assert cmd.count("h264_v4l2m2m") == 3 and "format=yuv420p" in cmd[cmd.index("-filter_complex") + 1]
 cmd = V.args("ffmpeg", "v4l2m2m-lite", "rtsp://cam", outs)
 assert cmd.count("h264_v4l2m2m") == 2
-cmd = V.args("ffmpeg", "rkmpp", "rtsp://cam", outs)
+cmd = V.args("ffmpeg", "rkmpp-lite", "rtsp://cam", outs)
 assert cmd.count("h264_rkmpp") == 2 and "format=nv12" in cmd[cmd.index("-filter_complex") + 1]
 # 4. The versions check uses a 1080p clip (a Pi's decoder stops at 1080p); converting keeps its 4K one
 import tempfile

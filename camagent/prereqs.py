@@ -164,6 +164,9 @@ def _windows_ffmpeg_candidates():
                 yield str(hit)
 
 
+ROCKCHIP_FFMPEG = "/opt/ffmpeg-rockchip/bin/ffmpeg"     # scripts/build-ffmpeg-rockchip.sh installs it here
+
+
 def find_ffmpeg(configured=""):
     """The ffmpeg to run. On Windows one in an administrators-only folder if there is one; otherwise (e.g. the common
     C:\\ffmpeg, or one installed for one user) that one anyway, with a warning for the host (unsafe_ffmpeg(): doctor,
@@ -172,6 +175,8 @@ def find_ffmpeg(configured=""):
     picks = []
     if configured and is_file(configured):
         picks.append(configured)
+    if not WINDOWS and is_file(ROCKCHIP_FFMPEG):
+        picks.append(ROCKCHIP_FFMPEG)        # a Rockchip build (0.25): uses the board's video hardware
     found = which("ffmpeg")
     if found:
         picks.append(found)

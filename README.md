@@ -4,6 +4,9 @@ CamAgent sends your camera to [YonderView](https://yonderview.net). Install it o
 the same network as the camera (a Windows PC, a mini PC or a Raspberry Pi) and leave that computer on.
 A mini PC with an Intel graphics chip is best: it can also make the camera's lower qualities (720p, 480p),
 which saves YonderView's server the work. A Raspberry Pi sends the camera's own video only.
+A **Rockchip board** (for example a Radxa ROCK 4D, RK3576) converts in hardware: 4K to 1080p, and 720p/480p for
+viewers, with almost no CPU. It needs a Rockchip build of ffmpeg: run `scripts/build-ffmpeg-rockchip.sh` once
+(it explains the one install command it needs first).
 
 ## First-time setup (about 10 minutes)
 
