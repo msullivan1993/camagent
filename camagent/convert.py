@@ -72,6 +72,12 @@ def args(method, kbps=DEFAULT_KBPS, scale=True, height=TARGET_HEIGHT):
     kbps = int(kbps or DEFAULT_KBPS)
     rate = ["-b:v", f"{kbps}k", "-maxrate", f"{int(kbps * 1.25)}k", "-bufsize", f"{kbps * 2}k"]
     keys = ["-force_key_frames", "expr:gte(t,n_forced*2)", "-bf", "0"]
+    if method.startswith("rkmpp"):
+        # Rockchip's encoder misreads -maxrate/-bufsize and -force_key_frames with a live camera's clock timestamps:
+        # 4500k came out at ~110-150 kbps (ROCK 4D, 0.25.3). Its own CBR keeps the rate steady, and a fixed keyframe
+        # interval of 50 frames is 2 s at 25 fps (under 3.5 s even at 15 fps)
+        rate = ["-b:v", f"{kbps}k"]
+        keys = ["-g", "50", "-bf", "0"]
     sw_scale = [f"scale=-2:'min({height},ih)'"] if scale else []
     if method == "qsv":
         vf = [f"scale_qsv=w=-2:h={height}"] if scale else []

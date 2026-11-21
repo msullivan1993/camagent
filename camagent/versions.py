@@ -179,7 +179,7 @@ def args(ffmpeg, method, src, outputs, mark_files=None, mark=None, audio=False, 
             chain.append(fmt)
         graph.append(f"[s{i}]" + ",".join(chain) + f"[o{i}]")
     cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "warning"]
-    if wallclock:
+    if wallclock and not method.startswith("rkmpp"):       # Rockchip: the camera's own timestamps (see uplink)
         cmd += ["-use_wallclock_as_timestamps", "1"]
     # The camera's stream is known (the uplink reads it all the time): probe it for 2 s, not ffmpeg's default 5,
     # so the versions reach the server before it gives up waiting (a Pi 3B took ~11 s to start with the default).
@@ -189,8 +189,9 @@ def args(ffmpeg, method, src, outputs, mark_files=None, mark=None, audio=False, 
         k = int(o["kbps"])
         cmd += ["-map", f"[o{i}]"]
         cmd += ["-map", "0:a:0?", "-c:a", "aac", "-b:a", "64k", "-ar", "48000"] if audio else []
-        cmd += [*enc, "-bf", "0", "-b:v", f"{k}k", "-maxrate", f"{int(k * 1.25)}k", "-bufsize", f"{k * 2}k",
-                "-force_key_frames", "expr:gte(t,n_forced*2)"]
+        cap = [] if method.startswith("rkmpp") else ["-maxrate", f"{int(k * 1.25)}k", "-bufsize", f"{k * 2}k"]
+        # (Rockchip: no -maxrate/-bufsize: with live timestamps it made 720p at ~20 kbps; its CBR holds the rate)
+        cmd += [*enc, "-bf", "0", "-b:v", f"{k}k", *cap, "-force_key_frames", "expr:gte(t,n_forced*2)"]
         cmd += [] if audio else ["-an"]
         cmd += ["-f", "mpegts", o["url"]]
     return cmd

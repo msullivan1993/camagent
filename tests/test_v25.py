@@ -22,7 +22,9 @@ pre, post = convert.args("rkmpp")
 assert pre == ["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime"]
 vf = post[post.index("-vf") + 1]
 assert vf == "scale_rkrga=w=-2:h='min(1080,ih)':format=nv12"
-assert "h264_rkmpp" in post and "CBR" in post and "-force_key_frames" in post and "-bf" in post
+assert "h264_rkmpp" in post and "CBR" in post and "-bf" in post
+# 0.25.3: no -maxrate/-bufsize/-force_key_frames (with live timestamps they made ~150 kbps); a fixed 50-frame GOP
+assert post[post.index("-g") + 1] == "50" and "-maxrate" not in post and "-force_key_frames" not in post
 pre, post = convert.args("rkmpp", scale=False)                        # an H.265 1080p camera: re-encode only
 assert "-vf" not in post and "h264_rkmpp" in post
 
@@ -36,6 +38,7 @@ assert cmd[i - 4:i] == ["-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prim
 graph = cmd[cmd.index("-filter_complex") + 1]
 assert "scale_rkrga=w=-2:h='min(720,ih)':format=nv12[o0]" in graph and "hwdownload" not in graph
 assert "fps=15" in graph and cmd.count("h264_rkmpp") == 2
+assert "-maxrate" not in cmd and "-bufsize" not in cmd                # 0.25.3: the cap made ~20 kbps copies
 with mock.patch.object(V, "_mark_filters", return_value=["drawtext=x"]):
     cmd = V.args("ffmpeg", "rkmpp", "rtsp://cam", outs, mark_files=("a", "b"),
                  mark={"on": ["480c"], "every": 15, "line1": "x", "line2": "y"})
@@ -88,3 +91,10 @@ with mock.patch.object(convert, "rockchip", return_value=False), mock.patch.obje
     u._fell_to = None; u._fast_fails = 0
     assert u.convert_method() == "x264"                                   # not a Rockchip board: as saved
 print("0.25.2 OK")
+
+# 7. (0.25.3) Rockchip: the camera's own timestamps, not the arrival clock (that made ~100-300 kbps at random)
+cmd = V.args("ffmpeg", "rkmpp", "rtsp://cam", outs, wallclock=True)
+assert "-use_wallclock_as_timestamps" not in cmd
+cmd = V.args("ffmpeg", "qsv", "rtsp://cam", outs, wallclock=True)
+assert "-use_wallclock_as_timestamps" in cmd                              # everything else unchanged
+print("0.25.3 OK")

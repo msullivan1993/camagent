@@ -162,9 +162,12 @@ class Uplink(threading.Thread):
             raise RuntimeError(unsafe_ffmpeg() or "ffmpeg not found; install it or set [stream] ffmpeg in the config")
         cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "warning",
                "-progress", "pipe:1", "-nostats"]
-        if s.get("wallclock_timestamps", True):
-            cmd += ["-use_wallclock_as_timestamps", "1"]
         method = self.convert_method()
+        # Rockchip's encoder: the camera's own timestamps. With the arrival clock, the burst of frames at the start
+        # got near-equal times, it took a huge frame rate and budgeted almost no bits (4500k came out at ~100-300
+        # kbps, at random; ROCK 4D, 0.25.3)
+        if s.get("wallclock_timestamps", True) and not (method or "").startswith("rkmpp"):
+            cmd += ["-use_wallclock_as_timestamps", "1"]
         if method:
             before, after = convert.args(method, s.get("bitrate_kbps"),
                                          scale=int(s.get("source_height") or 9999) > convert.TARGET_HEIGHT)

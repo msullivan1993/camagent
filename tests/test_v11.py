@@ -20,6 +20,9 @@ def cfg(**stream):
 for m in convert.LABELS:
     before, after = convert.args(m, 4000)
     a = " ".join(after)
+    if m.startswith("rkmpp"):  # 0.25.3: Rockchip keeps the rate with its CBR and a fixed 50-frame keyframe interval
+        assert "-bf 0" in a and "-g 50" in a and "-b:v 4000k" in a, m
+        continue
     assert "-bf 0" in a and "expr:gte(t,n_forced*2)" in a and "-b:v 4000k" in a and "-maxrate 5000k" in a, m
     assert ("h264" in a or "libx264" in a), m
     assert "1080" in a, m                                         # shrinks to 1080p
